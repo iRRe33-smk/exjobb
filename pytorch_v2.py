@@ -82,28 +82,28 @@ class TorchGame():
         learningRate = 1
         gradFlipper = torch.transpose(torch.tensor([ [1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
 
-        act_n = Action.clone().detach().requires_grad_(True)
-        dA = torch.ones_like(act_n)
+        act_new = Action.clone().detach().requires_grad_(True)
+        # dA = torch.ones_like(act_n)
 
-        while torch.norm(dA) > eps or iteration < 50:
+        while iteration < 50:
+            act_n = torch.tensor(act_new,requires_grad=True)
             
-            trl = torch.pow(1+torch.exp(-torch.add(State,act_n)*(1/self.I)+self.D),-1)
+            trl_temp = torch.pow(1+torch.exp(-torch.add(State,act_n)*(1/self.I)+self.D),-1)
+            trl = torch.unsqueeze(torch.transpose(trl_temp,0,-1),1)
             
-            
-            trl_temp = torch.unsqueeze(torch.transpose(trl,0,-1),1)
             capa_temp = torch.transpose(torch.transpose(self.CAPABILITYMATRIX,2,0),1,2)
-        
-
+            capabilities = torch.matmul(trl,capa_temp ).squeeze()
             
-            capabilities = torch.matmul(trl_temp,capa_temp ).squeeze()
             score = torch.sum(capabilities,dim=1) / torch.sum(capabilities)
-            
+        
             score.backward(torch.ones_like(score))
-            
-            # print(gradAct.is_leaf)
-            
+
             dA = act_n.grad
-            act_n = torch.add(act_n , dA * gradFlipper * learningRate)#.retain_grad()
+ 
+                
+            # act_n.grad.zero_()
+            act_new = torch.add(act_n , dA * gradFlipper * learningRate)
+            # act_n.requires_grad_()
             
             print(f"norm(dA) = {torch.norm(dA)}, P1 winprob = {score}")
             
