@@ -17,11 +17,10 @@ class TorchGame():
         self.I = I
         self.D = D
         
-        
-        # self.CAPABILITYMATRIX = torch.rand(N_Technologies,N_Capabilities,2) # assuming differnt conversion for each of the players, informed by specific scenario 
-        
-        CapabilityMatrixShape = (N_Technologies,N_Capabilities,2)
-        numElems = N_Technologies * N_Capabilities * 2
+        # command and control, maneuver, intelligence, fires, sustainment, information, protection, and CIMIC
+        self.CapabilityNames = ["Fires", "Protection", "Maneuver","Information","Intelligence","Sustainment","C2"]
+        CapabilityMatrixShape = (2,N_Technologies,N_Capabilities)
+        numElems = 2 * N_Technologies * N_Capabilities
         
         self.CAPABILITYMATRIX = torch.reshape(
             torch.normal(
@@ -40,38 +39,49 @@ class TorchGame():
         self.Q = []
     
     def Update_State(self,State,Action):
+        
         #UpdateValue = randomness(Action) #implement stochasticity
         UpdateValue = Action
         
         newState = torch.add(State,UpdateValue)
-        newState.requires_grad_(True)
         
         return newState
 
     def TechnologyReadiness(self,State):
         
-        TRL = torch.pow(1+torch.exp(-State*(1/self.I)+self.D),-1)
-        TRL.requires_grad_(True)
-        return TRL
+        trl_temp = torch.pow(1+torch.exp(-State*(1/self.I)+self.D),-1)
+        trl = torch.unsqueeze(torch.transpose(trl_temp,0,-1),1)
+        
+        return trl
 
     def TechToCapa(self,State):
         
-        TechnologyReadinessLevel = self.TechnologyReadiness(State)
+        trl = self.TechnologyReadiness(State)
         
+        #capa_temp = torch.transpose(torch.transpose(self.CAPABILITYMATRIX,2,0),1,2)
         
-        Capabilities = torch.empty((self.N_Capabilities,2))
-
-        for i in range(2):
-            Capabilities[:,i] = torch.transpose(TechnologyReadinessLevel[:,i],0,-1) @ self.CAPABILITYMATRIX[:,:,i]
-        Capabilities.requires_grad_(True)
-
-            
-            
-        return Capabilities
+        capabilities = torch.matmul(trl,self.CAPABILITYMATRIX ).squeeze()
+        
+        return capabilities
     
     def Battle(self,Capabilities):
-        results = torch.div(torch.sum(Capabilities,dim=0) , torch.sum(Capabilities))
+        results = torch.sum(Capabilities,dim=1) / torch.sum(Capabilities)
         return results
+    
+    def SalvoLikeBattle(self,Capabilities):
+        # ["Fires", "Protection", "Maneuver","Information","Intelligence","Sustainment","C2"]
+        # firstShotSkillDiff = torch.sum(Capabilities[1,[3,4,6]]) - torch.sum(Capabilities[1,[3,4,6]])
+        # firstShotAdvantage = torch.tanh(firstShotSkillDiff/10)
+        numParams = 5
+        capToParamMatrix = torch.rand((len(self.CapabilityNames),numParams))
+        
+        battleParams = Capabilities @ capToParamMatrix
+        
+        
+       
+        
+         
+        return
     
     def OptimizeAction(self, State,Action): #this should use the battle function
 
@@ -82,30 +92,36 @@ class TorchGame():
         learningRate = 1
         gradFlipper = torch.transpose(torch.tensor([ [1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
 
-        act_new = Action.clone().detach().requires_grad_(True)
-        # dA = torch.ones_like(act_n)
-
+        act_new = Action.clone()
+        
+        
+        stat_0 = State.clone()
+        
         while iteration < 50:
             act_n = torch.tensor(act_new,requires_grad=True)
+            stat_n = self.Update_State(stat_0,act_n)
             
-            trl_temp = torch.pow(1+torch.exp(-torch.add(State,act_n)*(1/self.I)+self.D),-1)
-            trl = torch.unsqueeze(torch.transpose(trl_temp,0,-1),1)
+            capa_n = self.TechToCapa(stat_n)
+            score_n = self.Battle(capa_n)
             
-            capa_temp = torch.transpose(torch.transpose(self.CAPABILITYMATRIX,2,0),1,2)
-            capabilities = torch.matmul(trl,capa_temp ).squeeze()
+            #######################################
+            # trl_temp = torch.pow(1+torch.exp(-torch.add(State,act_n)*(1/self.I)+self.D),-1)
+            # trl = torch.unsqueeze(torch.transpose(trl_temp,0,-1),1)
             
-            score = torch.sum(capabilities,dim=1) / torch.sum(capabilities)
-        
-            score.backward(torch.ones_like(score))
+            # capa_temp = torch.transpose(torch.transpose(self.CAPABILITYMATRIX,2,0),1,2)
+            # capabilities = torch.matmul(trl,capa_temp ).squeeze()
+            
+            # score = torch.sum(capabilities,dim=1) / torch.sum(capabilities)
+            ###############################################
+            
+            score_n.backward(torch.ones_like(score_n))
 
             dA = act_n.grad
- 
-                
-            # act_n.grad.zero_()
+
             act_new = torch.add(act_n , dA * gradFlipper * learningRate)
-            # act_n.requires_grad_()
+
             
-            print(f"norm(dA) = {torch.norm(dA)}, P1 winprob = {score}")
+            print(f"norm(dA) = {torch.norm(dA)}, P1 winprob = {score_n}")
             
             iteration +=1 
 
