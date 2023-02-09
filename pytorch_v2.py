@@ -38,6 +38,29 @@ class TorchGame():
         self.History = []
         self.Q = []
     
+    def _randomPointsInSphere(self,rad=1):
+        #https://en.wikipedia.org/wiki/N-sphere#Spherical_coordinates
+        
+        nPoints = self.N_actions_startpoint
+        nDim = self.N_Technologies
+        params = torch.rand(size = (nPoints,nDim+1))
+        
+        r = params[:,-1] * rad
+        X = (r * torch.eye(nPoints)) @ torch.ones(nPoints,nDim) 
+
+        for i in range(nDim-1):
+            X[:,i] *= torch.cos(X[:,i])
+            #print(f"c{i}")
+            for j in range(i):
+                X[:,i] *= torch.sin(X[:,j])
+                #print(f"s{j}")
+        
+        for j in range(nDim):
+                X[:,nDim-1] *= torch.sin(X[:,j])
+                #print(f"s{j}")
+        
+        return X 
+     
     def Update_State(self,State,Action):
         
         #UpdateValue = randomness(Action) #implement stochasticity
@@ -89,7 +112,7 @@ class TorchGame():
         eps = 1E-2
         iteration = 0
         
-        learningRate = 1
+        learningRate = 5
         gradFlipper = torch.transpose(torch.tensor([ [1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
 
         act_new = Action.clone()
@@ -104,19 +127,12 @@ class TorchGame():
             capa_n = self.TechToCapa(stat_n)
             score_n = self.Battle(capa_n)
             
-            #######################################
-            # trl_temp = torch.pow(1+torch.exp(-torch.add(State,act_n)*(1/self.I)+self.D),-1)
-            # trl = torch.unsqueeze(torch.transpose(trl_temp,0,-1),1)
-            
-            # capa_temp = torch.transpose(torch.transpose(self.CAPABILITYMATRIX,2,0),1,2)
-            # capabilities = torch.matmul(trl,capa_temp ).squeeze()
-            
-            # score = torch.sum(capabilities,dim=1) / torch.sum(capabilities)
-            ###############################################
-            
+            #add logarithmic barrier to prevent players from moving outside allow actionspace            
             score_n.backward(torch.ones_like(score_n))
 
             dA = act_n.grad
+
+            
 
             act_new = torch.add(act_n , dA * gradFlipper * learningRate)
 
@@ -134,7 +150,12 @@ class TorchGame():
 
     def GetActions(self,State):
         
-        ActionStartPoints = torch.rand(self.N_Technologies,2,self.N_actions_startpoint)
+        # ActionStartPoints = torch.rand(self.N_Technologies,2,self.N_actions_startpoint)
+        P1_points = torch.transpose(self._randomPointsInSphere(rad=1),0,-1)
+        P2_points = torch.transpose(self._randomPointsInSphere(rad=1),0,-1)
+        ActionStartPoints = torch.stack((P1_points,P2_points),dim=1)
+
+        
         
         NashEquilibria = []
         for i in range(self.N_actions_startpoint):
@@ -170,3 +191,4 @@ if __name__ == "__main__":
     FullGame = TorchGame(N_Technologies=21,Horizon=4,N_actions=3)
     hist = FullGame.Main()
     #print(len(hist))
+
