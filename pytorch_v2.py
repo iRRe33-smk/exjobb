@@ -4,15 +4,15 @@ import numpy as np
 import time
 
 class TorchGame():
-    def __init__(self, N_Technologies =3, N_Capabilities = 6, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, I=25, D = 0) -> None:
-        torch.manual_seed(1337)
+    def __init__(self, N_Technologies =3, N_Capabilities = 6, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, Start_action_length = [1,1], I=3, D = 1) -> None:
+        #torch.manual_seed(1337)
         # global variables
         self.N_Technologies = N_Technologies
         self.N_Capabilities = N_Capabilities
         self.Horizon = Horizon
         self.N_actions_startpoint = N_actions_startpoint
         self.N_actions = N_actions
-        
+        self.Plyers_action_length = torch.tensor(Start_action_length)
         # Used in TRL calculations
         self.I = I
         self.D = D
@@ -32,7 +32,7 @@ class TorchGame():
         
         #creating the initalState
         st = torch.rand(N_Technologies,2)
-        divisor = 0.01*torch.sum(st,0) # sum to 100
+        divisor = 0.01*(torch.sum(st,0)) # sum to 100
         self.InitialState = torch.divide(st,divisor)
         
         self.History = []
@@ -43,22 +43,27 @@ class TorchGame():
         
         nPoints = self.N_actions_startpoint
         nDim = self.N_Technologies
-        params = torch.rand(size = (nPoints,nDim+1))
+        params = (torch.rand(size = (nPoints,nDim+1)) + 1) / 2
+        #radius [0,1] * r
+        #angles [0,pi/2]
         
         r = params[:,-1] * rad
-        X = (r * torch.eye(nPoints)) @ torch.ones(nPoints,nDim) 
-
+        phi = params[:,:-1] * torch.pi / 2
+        
+        
+        X = torch.ones(nPoints,nDim) 
         for i in range(nDim-1):
-            X[:,i] *= torch.cos(X[:,i])
+            X[:,i] *= torch.cos(phi[:,i])
             #print(f"c{i}")
             for j in range(i):
-                X[:,i] *= torch.sin(X[:,j])
+                X[:,i] *= torch.sin(phi[:,j])
                 #print(f"s{j}")
         
         for j in range(nDim):
-                X[:,nDim-1] *= torch.sin(X[:,j])
+                X[:,nDim-1] *= torch.sin(phi[:,j])
                 #print(f"s{j}")
         
+        X = (r * torch.eye(nPoints)) @ X # stretching by radius
         return X 
      
     def Update_State(self,State,Action):
@@ -88,7 +93,7 @@ class TorchGame():
         return capabilities
     
     def Battle(self,Capabilities):
-        results = torch.sum(Capabilities,dim=1) / torch.sum(Capabilities)
+        results = torch.sum(Capabilities**3,dim=1) / torch.sum(Capabilities**3)
         return results
     
     def SalvoLikeBattle(self,Capabilities):
@@ -106,43 +111,54 @@ class TorchGame():
          
         return
     
-    def OptimizeAction(self, State,Action): #this should use the battle function
+    def OptimizeAction(self, State,Action,max_len=torch.tensor([1,1])): #this should use the battle function
 
         #this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
         eps = 1E-2
+        lower_log_barrier_scaler = 1/100
+        upper_log_barrier_scaler = 1/10
         iteration = 0
         
-        learningRate = 5
-        gradFlipper = torch.transpose(torch.tensor([ [1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
+        learningRate = .1
+        gradFlipper = torch.transpose(torch.tensor([ [-1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
 
         act_new = Action.clone()
         
         
         stat_0 = State.clone()
-        
+        winprob_0 = self.Battle(self.TechToCapa(stat_0))
         while iteration < 50:
-            act_n = torch.tensor(act_new,requires_grad=True)
+            act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
+            act_len = torch.norm(act_n,p=2,dim=0)
+            
             stat_n = self.Update_State(stat_0,act_n)
             
             capa_n = self.TechToCapa(stat_n)
-            score_n = self.Battle(capa_n)
+            win_prob = self.Battle(capa_n) 
             
-            #add logarithmic barrier to prevent players from moving outside allow actionspace            
-            score_n.backward(torch.ones_like(score_n))
+            #assert torch.all(torch.cat((act_len>0, act_len<max_len)) )
+            score_n = win_prob + lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
+            
+            score_n.backward(score_n)#torch.ones_like(score_n))
 
             dA = act_n.grad
+            
+            #assert torch.all(dA > 0), "found negative gradients"
+            #stat_n.grad
+            
+            
+            action_step = gradFlipper * dA * learningRate
+            act_new = torch.add(act_n , action_step)
+                                
 
             
-
-            act_new = torch.add(act_n , dA * gradFlipper * learningRate)
-
+            print(f"norm(Action) = {act_len}, winprob_0 = {winprob_0} winprob_n = {win_prob}")
             
-            print(f"norm(dA) = {torch.norm(dA)}, P1 winprob = {score_n}")
-            
+           
             iteration +=1 
 
     
-        
+
         return (act_n.clone().detach())
         
     def FilterActions(self, Actions): #keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
@@ -151,8 +167,8 @@ class TorchGame():
     def GetActions(self,State):
         
         # ActionStartPoints = torch.rand(self.N_Technologies,2,self.N_actions_startpoint)
-        P1_points = torch.transpose(self._randomPointsInSphere(rad=1),0,-1)
-        P2_points = torch.transpose(self._randomPointsInSphere(rad=1),0,-1)
+        P1_points = torch.transpose(self._randomPointsInSphere(rad=self.Plyers_action_length[0]),0,-1)
+        P2_points = torch.transpose(self._randomPointsInSphere(rad=self.Plyers_action_length[1]),0,-1)
         ActionStartPoints = torch.stack((P1_points,P2_points),dim=1)
 
         
@@ -160,7 +176,7 @@ class TorchGame():
         NashEquilibria = []
         for i in range(self.N_actions_startpoint):
             init_action = ActionStartPoints[:,:,i]#.clone().detach().requires_grad_(True)
-            NE_action = self.OptimizeAction(State,  init_action)
+            NE_action = self.OptimizeAction(State,  init_action,self.Plyers_action_length)
             NashEquilibria.append(NE_action)
             
          
@@ -188,7 +204,8 @@ class TorchGame():
 
 if __name__ == "__main__":
             
-    FullGame = TorchGame(N_Technologies=21,Horizon=4,N_actions=3)
+    FullGame = TorchGame(N_Technologies=21,Horizon=4,N_actions=3,I=1.5,D=6)
     hist = FullGame.Main()
+    
     #print(len(hist))
 
