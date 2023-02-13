@@ -1,5 +1,5 @@
 import torch
-from torch.autograd import grad, Function
+from torch.autograd import grad, Function,functional
 import numpy as np
 import time
 
@@ -115,11 +115,11 @@ class TorchGame():
 
         #this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
         eps = 1E-2
-        lower_log_barrier_scaler = 1/100
-        upper_log_barrier_scaler = 1/10
+        lower_log_barrier_scaler = 2
+        upper_log_barrier_scaler = 1/4
         iteration = 0
         
-        learningRate = .1
+        learningRate = 1/16
         gradFlipper = torch.transpose(torch.tensor([ [-1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
 
         act_new = Action.clone()
@@ -127,7 +127,7 @@ class TorchGame():
         
         stat_0 = State.clone()
         winprob_0 = self.Battle(self.TechToCapa(stat_0))
-        while iteration < 50:
+        while iteration < 500:
             act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
             act_len = torch.norm(act_n,p=2,dim=0)
             
@@ -136,7 +136,7 @@ class TorchGame():
             capa_n = self.TechToCapa(stat_n)
             win_prob = self.Battle(capa_n) 
             
-            #assert torch.all(torch.cat((act_len>0, act_len<max_len)) )
+            #Introducing barriers means the game is no longer zero sum.
             score_n = win_prob + lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
             
             score_n.backward(score_n)#torch.ones_like(score_n))
@@ -157,8 +157,7 @@ class TorchGame():
            
             iteration +=1 
 
-    
-
+            
         return (act_n.clone().detach())
         
     def FilterActions(self, Actions): #keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
