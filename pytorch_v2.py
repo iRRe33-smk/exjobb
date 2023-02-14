@@ -1,7 +1,21 @@
 import torch
 from torch.autograd import grad, Function,functional
-import numpy as np
+# import numpy as np
 import time
+# import pandas as pd
+
+def PCA(X : torch.Tensor):
+    covs = torch.cov(X)
+    covs.type(torch.complex64)
+    
+    vals, vec = torch.linalg.eig(covs)
+    
+    explained_variance = torch.cumsum(torch.abs(vals),-1) / torch.sum(torch.abs(vals))
+    
+    comps = vec @ covs
+    
+    return(vals,vec,explained_variance,comps)
+    
 
 class TorchGame():
     def __init__(self, N_Technologies =3, N_Capabilities = 6, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, Start_action_length = [1,1], I=3, D = 1) -> None:
@@ -17,6 +31,7 @@ class TorchGame():
         self.I = I
         self.D = D
         
+        self.FINAL_ACTIONS = []
         # command and control, maneuver, intelligence, fires, sustainment, information, protection, and CIMIC
         self.CapabilityNames = ["Fires", "Protection", "Maneuver","Information","Intelligence","Sustainment","C2"]
         CapabilityMatrixShape = (2,N_Technologies,N_Capabilities)
@@ -127,24 +142,36 @@ class TorchGame():
         
         stat_0 = State.clone()
         winprob_0 = self.Battle(self.TechToCapa(stat_0))
-        while iteration < 500:
-            act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
+        def scoringFun(act_n):
+           
             act_len = torch.norm(act_n,p=2,dim=0)
-            
             stat_n = self.Update_State(stat_0,act_n)
             
             capa_n = self.TechToCapa(stat_n)
             win_prob = self.Battle(capa_n) 
             
-            #Introducing barriers means the game is no longer zero sum.
             score_n = win_prob + lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
+            
+            return score_n        
+        while iteration < 500:
+            # act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
+            # act_len = torch.norm(act_n,p=2,dim=0)
+            
+            # stat_n = self.Update_State(stat_0,act_n)
+            
+            # capa_n = self.TechToCapa(stat_n)
+            # win_prob = self.Battle(capa_n) 
+            
+            # #Introducing barriers means the game is no longer zero sum.
+            # score_n = win_prob + lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
+            
+            act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
+            score_n = scoringFun(act_n)
             
             score_n.backward(score_n)#torch.ones_like(score_n))
 
             dA = act_n.grad
-            
-            #assert torch.all(dA > 0), "found negative gradients"
-            #stat_n.grad
+            # hess = functional.hessian(scoringFun,act_n)
             
             
             action_step = gradFlipper * dA * learningRate
@@ -152,13 +179,17 @@ class TorchGame():
                                 
 
             
-            print(f"norm(Action) = {act_len}, winprob_0 = {winprob_0} winprob_n = {win_prob}")
+            #print(f"norm(Action) = {act_len}, winprob_0 = {winprob_0} winprob_n = {win_prob}")
             
            
             iteration +=1 
 
-            
-        return (act_n.clone().detach())
+            final_action =act_n.clone().detach()
+           
+            if final_action is not None:
+                self.FINAL_ACTIONS.append(final_action)
+                
+        return final_action
         
     def FilterActions(self, Actions): #keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
         return Actions[:self.N_actions]
@@ -202,9 +233,27 @@ class TorchGame():
              
 
 if __name__ == "__main__":
-            
-    FullGame = TorchGame(N_Technologies=21,Horizon=4,N_actions=3,I=1.5,D=6)
+    
+    nTechs = 2
+    FullGame = TorchGame(N_Technologies=nTechs,Horizon=4,N_actions=5,I=1.5,D=6)
     hist = FullGame.Main()
+    
+    numHist = len(hist)
+    
+    actions = torch.zeros((numHist,nTechs*2))    
+
+    for i in range(numHist):
+        act = hist[i][1]
+        actions[i,:] = torch.flatten(act)
+        
+    vals,vec,explained_variance = PCA(actions)
+    
+    print(vals)
+    print(vec)
+    print(explained_variance)
+        
+    
+    
     
     #print(len(hist))
 
