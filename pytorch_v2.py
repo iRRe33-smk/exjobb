@@ -108,7 +108,7 @@ class TorchGame():
         return capabilities
     
     def Battle(self,Capabilities):
-        results = torch.sum(Capabilities**3,dim=1) / torch.sum(Capabilities**3)
+        results = torch.sum(Capabilities,dim=1) / torch.sum(Capabilities)
         return results
     
     def SalvoLikeBattle(self,Capabilities):
@@ -129,19 +129,20 @@ class TorchGame():
     def OptimizeAction(self, State,Action,max_len=torch.tensor([1,1])): #this should use the battle function
 
         #this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
-        eps = 1E-2
-        lower_log_barrier_scaler = 2
-        upper_log_barrier_scaler = 1/4
+        eps = 10#1E-2
+        lower_log_barrier_scaler = 0#2
+        upper_log_barrier_scaler = 0#1/4
         iteration = 0
         
-        learningRate = 1/16
-        gradFlipper = torch.transpose(torch.tensor([ [-1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
+        learningRate = 2#1/16
+        gradFlipper = torch.transpose(torch.tensor([ [1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
 
         act_new = Action.clone()
         
         
         stat_0 = State.clone()
         winprob_0 = self.Battle(self.TechToCapa(stat_0))
+        
         def scoringFun(act_n):
            
             act_len = torch.norm(act_n,p=2,dim=0)
@@ -150,28 +151,18 @@ class TorchGame():
             capa_n = self.TechToCapa(stat_n)
             win_prob = self.Battle(capa_n) 
             
-            score_n = win_prob + lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
+            score_n = win_prob #+ lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
             
-            return score_n        
+            return score_n , win_prob    
         while iteration < 500:
-            # act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
-            # act_len = torch.norm(act_n,p=2,dim=0)
-            
-            # stat_n = self.Update_State(stat_0,act_n)
-            
-            # capa_n = self.TechToCapa(stat_n)
-            # win_prob = self.Battle(capa_n) 
-            
-            # #Introducing barriers means the game is no longer zero sum.
-            # score_n = win_prob + lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
-            
+
             act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
-            score_n = scoringFun(act_n)
+            score_n , win_prob_n = scoringFun(act_n)
             
             score_n.backward(score_n)#torch.ones_like(score_n))
 
             dA = act_n.grad
-            # hess = functional.hessian(scoringFun,act_n)
+            #hess = functional.hessian(scoringFun,act_n)
             
             
             action_step = gradFlipper * dA * learningRate
@@ -179,7 +170,7 @@ class TorchGame():
                                 
 
             
-            #print(f"norm(Action) = {act_len}, winprob_0 = {winprob_0} winprob_n = {win_prob}")
+            #print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
             
            
             iteration +=1 
@@ -188,7 +179,10 @@ class TorchGame():
            
             if final_action is not None:
                 self.FINAL_ACTIONS.append(final_action)
-                
+        
+        
+        print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
+            
         return final_action
         
     def FilterActions(self, Actions): #keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
@@ -205,7 +199,7 @@ class TorchGame():
         
         NashEquilibria = []
         for i in range(self.N_actions_startpoint):
-            init_action = ActionStartPoints[:,:,i]#.clone().detach().requires_grad_(True)
+            init_action = ActionStartPoints[:,:,i]
             NE_action = self.OptimizeAction(State,  init_action,self.Plyers_action_length)
             NashEquilibria.append(NE_action)
             
@@ -234,7 +228,7 @@ class TorchGame():
 
 if __name__ == "__main__":
     
-    nTechs = 2
+    nTechs = 21
     FullGame = TorchGame(N_Technologies=nTechs,Horizon=4,N_actions=5,I=1.5,D=6)
     hist = FullGame.Main()
     
@@ -242,15 +236,15 @@ if __name__ == "__main__":
     
     actions = torch.zeros((numHist,nTechs*2))    
 
-    for i in range(numHist):
-        act = hist[i][1]
-        actions[i,:] = torch.flatten(act)
+    # for i in range(numHist):
+    #     act = hist[i][1]
+    #     actions[i,:] = torch.flatten(act)
         
-    vals,vec,explained_variance = PCA(actions)
+    # vals,vec,explained_variance = PCA(actions)
     
-    print(vals)
-    print(vec)
-    print(explained_variance)
+    # print(vals)
+    # print(vec)
+    # print(explained_variance)
         
     
     
