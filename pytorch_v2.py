@@ -20,6 +20,8 @@ def PCA(X : torch.Tensor):
 
 class TorchGame():
     def __init__(self, N_Technologies =3, N_Capabilities = 6, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, Start_action_length = [1,1], I=3, D = 1) -> None:
+        self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
         #torch.manual_seed(1337)
         # global variables
         self.N_Technologies = N_Technologies
@@ -143,7 +145,9 @@ class TorchGame():
         return
     
     def OptimizeAction(self, State,Action,max_len=torch.tensor([1,1])): #this should use the battle function
-
+        
+        
+        
         #this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
         eps = 10#1E-2
         lower_log_barrier_scaler = 0#2
@@ -151,7 +155,7 @@ class TorchGame():
         iteration = 0
         
         learningRate = 2#1/16
-        gradFlipper = torch.transpose(torch.tensor([ [1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
+        gradFlipper = torch.transpose(torch.tensor([ [-1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
 
         act_new = Action.clone()
         
@@ -170,7 +174,7 @@ class TorchGame():
             score_n = win_prob #+ lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
             
             return score_n , win_prob    
-        while iteration < 500:
+        while iteration < 1500:
 
             act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
             score_n , win_prob_n = scoringFun(act_n)
@@ -184,9 +188,7 @@ class TorchGame():
             action_step = gradFlipper * dA * learningRate
             act_new = torch.add(act_n , action_step)
             
-                                
 
-            
             #print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
             
            
@@ -203,6 +205,7 @@ class TorchGame():
         return final_action
         
     def FilterActions(self, Actions): #keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
+        
         return Actions[:self.N_actions]
 
     def GetActions(self,State):
@@ -246,7 +249,7 @@ class TorchGame():
 if __name__ == "__main__":
     
     nTechs = 21
-    FullGame = TorchGame(N_Technologies=nTechs,Horizon=4,N_actions=5,I=1.5,D=6)
+    FullGame = TorchGame(N_Technologies=nTechs,Horizon=5,N_actions=8,I=1.5,D=6)
     hist = FullGame.Main()
     
     numHist = len(hist)
