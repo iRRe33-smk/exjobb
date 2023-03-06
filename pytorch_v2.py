@@ -2,6 +2,7 @@ import torch
 from torch.autograd import grad, Function,functional
 # import numpy as np
 import time
+import json
 # import pandas as pd
 
 def PCA(X : torch.Tensor):
@@ -30,6 +31,18 @@ class TorchGame():
         # Used in TRL calculations
         self.I = I
         self.D = D
+        
+        
+        #load data from file
+        # xi_parms = {
+        #                     "mu" : [0] * self.N_Technologies,
+        #                     "sigma" : [1]*self.N_Technologies
+        #                   }
+        with open("config_files/xi_params.json") as f:
+            xi_parms = json.load(f)
+        
+        self.xi_params_mu = torch.tensor(xi_parms["mu"])
+        self.xi_params_sigma = torch.tensor(xi_parms["sigma"])
         
         self.FINAL_ACTIONS = []
         # command and control, maneuver, intelligence, fires, sustainment, information, protection, and CIMIC
@@ -83,8 +96,11 @@ class TorchGame():
      
     def Update_State(self,State,Action):
         
-        #UpdateValue = randomness(Action) #implement stochasticity
-        UpdateValue = Action
+
+        xi_1 = torch.normal(mean=self.xi_params_mu,std = self.xi_params_sigma)
+        xi_2 = torch.normal(mean=self.xi_params_mu,std = self.xi_params_sigma)
+        xi = torch.exp(torch.stack((xi_1,xi_2), dim=-1))
+        UpdateValue = Action * xi
         
         newState = torch.add(State,UpdateValue)
         
@@ -145,7 +161,7 @@ class TorchGame():
         
         def scoringFun(act_n):
            
-            act_len = torch.norm(act_n,p=2,dim=0)
+
             stat_n = self.Update_State(stat_0,act_n)
             
             capa_n = self.TechToCapa(stat_n)
@@ -167,6 +183,7 @@ class TorchGame():
             
             action_step = gradFlipper * dA * learningRate
             act_new = torch.add(act_n , action_step)
+            
                                 
 
             
