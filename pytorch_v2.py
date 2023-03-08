@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import time
 import json
+from classes.history import History
 # import pandas as pd
 
 def PCA(X : torch.Tensor):
@@ -240,7 +241,9 @@ class TorchGame():
             score_n = win_prob #+ lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
             
             return score_n , win_prob    
-        while (iteration < 1500):# or torch.all(torch.norm(action_step):
+        
+        eps = 1e-6
+        while (iteration < 1500) or torch.norm(action_step) > eps:
 
             act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
             score_n , win_prob_n = scoringFun(act_n)
@@ -259,18 +262,24 @@ class TorchGame():
            
             iteration +=1 
 
-            final_action =act_n.clone().detach()
-           
+            final_action = act_n.clone().detach()
             if final_action is not None:
                 self.FINAL_ACTIONS.append(final_action)
-        
+    
         
         print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
-            
-        return final_action
+        if torch.norm(final_action) <= eps:
+            return final_action
+        else:
+            return
         
     def FilterActions(self, Actions): #keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
+        # Filter out None
+        while(None in Actions):
+            Actions.remove(None)
         
+        # k-means
+
         return Actions[:self.N_actions]
 
     def GetActions(self,State):
@@ -292,21 +301,21 @@ class TorchGame():
         return self.FilterActions(NashEquilibria)
     
     def Main(self):
+        hist = History()
         start = time.time()
-        self.Q.append((self.InitialState,0))
+        node_id = 0
+        self.Q.append((self.InitialState, 0, node_id))
         
         while (len(self.Q) > 0 and time.time() - start < 10):
-            st,t = self.Q.pop() #the state which we are currently examining
-            #print(t)
+            st, t, node = self.Q.pop() #the state which we are currently examining
             act = self.GetActions(st) # small number of nash equilibria
             for a in act:
-                self.History.append((st,a)) # adding the entering state and the exiting action to history, reward should probably also be added. 
-                                          
+                node_id += 1
+                hist.add_data(Node_id=node_id, Parent_id=node, Time=t, State=t, Action=a, Reward=0)
                 
                 st_new = self.Update_State(st,a) #the resulting states of traversing along the nash equilibrium
                 if t+1 < self.Horizon:
-                    self.Q.append((st_new,t+1))
-                    
+                    self.Q.append((st_new,t+1, node+1))    
         return self.History
                 
              
