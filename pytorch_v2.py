@@ -141,6 +141,7 @@ class TorchGame():
         #capa_temp = torch.transpose(torch.transpose(self.PARAMCONVERSIONMATRIX,2,0),1,2)
         #2x10
         theta = torch.matmul(trl,self.PARAMCONVERSIONMATRIX ).squeeze()
+         
         
         return theta
     
@@ -149,6 +150,7 @@ class TorchGame():
         return results
     
     def InitiativeProbabilities(self, phi,psi, sigma=1,c=1.25):
+        
         stdev = 1.4142*sigma
         dist = torch.distributions.Normal(loc=phi-psi,scale = stdev)
         
@@ -162,8 +164,8 @@ class TorchGame():
     def SalvoBattle(self,theta):
         theta = torch.transpose(theta,0,-1)
         #deterministic salvo
-        def getDeltaN(theta1,theta2):
-            deltaP2 = (theta1[0] * theta1[2] * theta1[3] - theta2[0] * theta2[4] * theta2[5]) * theta1[6] / theta2[7]
+        def getDeltaN(theta1,theta2,N1,N2):
+            deltaP2 = (N1 * theta1[2] * theta1[3] - N2 * theta2[4] * theta2[5]) * theta1[6] / theta2[7]
             return deltaP2
         
         # numDraws = 1000
@@ -173,27 +175,28 @@ class TorchGame():
         # print(np.sum(InitiativeProbs))
         # initiatives = np.random.choice(a = [-1,0,1], p = np.float32(InitiativeProbs), size = numDraws)
         
-      
-        # for i in range(numDraws):
-            # init = initiatives[i]
-                
+        # p(p1_win | p1 inititative) = 40%, 
+        # p(p1_win | no inititative) = 35%
+        # p(p1_win | p2 inititative) = 25%
+        
+        for init in [-1,0,1]:
             A0 = theta[0,0]
             B0 = theta[0,1]            
             if init == -1:
 
-                deltaB = getDeltaN(theta[:,0], theta[:,1])
+                deltaB = getDeltaN(theta[:,0], theta[:,1],A0,B0)
                 theta[0,1] -= deltaB
                 
-                deltaA = getDeltaN(theta[:,1], theta[:,0])
+                deltaA = getDeltaN(theta[:,1], theta[:,0],B0-deltaB,A0)
                 theta[0,0] -= deltaA   
                 
 
             elif init == 0:        
-                deltaA = getDeltaN(theta[:,1], theta[:,0])
+                deltaA = getDeltaN(theta[:,1], theta[:,0],A0,B0)
                 deltaB = getDeltaN(theta[:,0], theta[:,1])
                 
-                theta[0,0] -= deltaA    
-                theta[0,1] -= deltaB
+                # theta[0,0] -= deltaA    
+                # theta[0,1] -= deltaB
                 
             elif init == 1:
                 deltaA = getDeltaN(theta[:,1], theta[:,0])
@@ -241,7 +244,7 @@ class TorchGame():
             stat_n = self.Update_State(stat_0,act_n)
             
             theta_n = self.techToParams(stat_n)
-            win_prob = self.SalvoBattle(theta_n) 
+            win_prob = self.Battle(theta_n) 
             
             score_n = win_prob #+ lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
             
