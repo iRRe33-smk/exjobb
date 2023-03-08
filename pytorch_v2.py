@@ -1,9 +1,6 @@
 import torch
-# from torch.autograd import grad, Function,functional
-import numpy as np
 import time
 import json
-# import pandas as pd
 
 def PCA(X : torch.Tensor):
     covs = torch.cov(X)
@@ -19,7 +16,7 @@ def PCA(X : torch.Tensor):
     
 
 class TorchGame():
-    def __init__(self, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, Start_action_length = [1,1], I=3, D = 1) -> None:
+    def __init__(self, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, Start_action_length = [10,10],I = 1, D= 3) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         #torch.manual_seed(1337)
@@ -75,13 +72,12 @@ class TorchGame():
              ]
         )
         
-        #This is pretty werid
-        initStates = [
-            torch.linalg.lstsq(
-                torch.transpose(self.PARAMCONVERSIONMATRIX[i,:,:].squeeze(),0,1),
-                initial_params[:,i].squeeze()).solution 
-            for i in range(2)]
-        self.InitialState = torch.stack(initStates,dim=-1)
+        
+        self.InitialState = 70 * torch.ones(size=(self.N_Technologies,2))
+        
+        
+        
+        
         print(self.InitialState)
         
         self.History = []
@@ -155,79 +151,103 @@ class TorchGame():
         dist = torch.distributions.Normal(loc=phi-psi,scale = stdev)
         
         critval = torch.tensor(c*stdev)
+      
         
         p1_favoured = 1-dist.cdf(critval)
         neither_favoured = dist.cdf(critval) - dist.cdf(-critval)
         p2_favoured = dist.cdf(-critval)
-        
-        return [p1_favoured, neither_favoured, p2_favoured ]
-    # def SalvoBattle(self,theta):
-    #     theta = torch.transpose(theta,0,-1)
-    #     #deterministic salvo
-    #     def getDeltaN(theta1,theta2,N1,N2):
-    #         deltaP2 = (N1 * theta1[2] * theta1[3] - N2 * theta2[4] * theta2[5]) * theta1[6] / theta2[7]
-    #         return deltaP2
-        
-    #     # numDraws = 1000
-    #     # wins = [0,0]
-        
-    #     InitiativeProbs = self.InitiativeProbabilities(theta[1,0],theta[1,1])
-    #     # print(np.sum(InitiativeProbs))
-    #     # initiatives = np.random.choice(a = [-1,0,1], p = np.float32(InitiativeProbs), size = numDraws)
-        
-    #     # p(p1_win | p1 inititative) = 40%, 
-    #     # p(p1_win | no inititative) = 35%
-    #     # p(p1_win | p2 inititative) = 25%
-        
-    #     for init in [-1,0,1]:
-    #         A0 = theta[0,0]
-    #         B0 = theta[0,1]            
-    #         if init == -1:
 
-    #             deltaB = getDeltaN(theta[:,0], theta[:,1],A0,B0)
-    #             theta[0,1] -= deltaB
-                
-    #             deltaA = getDeltaN(theta[:,1], theta[:,0],B0-deltaB,A0)
-    #             theta[0,0] -= deltaA   
-                
+        return torch.tensor([p1_favoured, neither_favoured, p2_favoured ])
+    
+    # def AccuracyProbabilities(self,theta_off,theta_def,d_off = 2,c_off = 1.5, d_def = 5, c_def = 3):
+    #     p_off = 1 / (1 + torch.exp(-1*((theta_off-d_off)/c_off)))
+    #     p_def = 1 / (1 + torch.exp(-1*((theta_def-d_def)/c_def)))
+        
+    #     return( p_off, p_def)
+    
+    
+    def ThetaToDefProb(self,theta):
+        d = 5
+        c = 3
 
-    #         elif init == 0:        
-    #             deltaA = getDeltaN(theta[:,1], theta[:,0],A0,B0)
-    #             deltaB = getDeltaN(theta[:,0], theta[:,1])
-                
-    #             # theta[0,0] -= deltaA    
-    #             # theta[0,1] -= deltaB
-                
-    #         elif init == 1:
-    #             deltaA = getDeltaN(theta[:,1], theta[:,0])
-    #             theta[0,0] -= deltaA 
-                
-    #             deltaB = getDeltaN(theta[:,0], theta[:,1])
-    #             theta[0,1] -= deltaB
+        p = 1 / (1 + torch.exp(-1*((theta-d)/c)))
+        return p
+
+    def ThetaToOffProb(self,theta):
+        d = 2.5
+        c = 1.5
+
+        p = 1 / (1 + torch.exp(-1*((theta-d)/c)))
+        return p
+    
+    def SalvoBattle(self,theta :torch.tensor):
+        # DeterministicSalvo
+        # print(theta.requires_grad)
+        theta = torch.transpose(theta,0,-1)
+        # print(theta)
+        
+        def getDeltaN(p1,p1_offPower,p1_attack, p2,p2_defPower, p2_stay):
             
+            deltaP2 = (p1 * p1_offPower - p2 * p2_defPower) * (p1_attack / p2_stay)            
+            return deltaP2
+        
+        # numDraws = 1000
+        # wins = [0,0]
+        
+        InitiativeProbs = self.InitiativeProbabilities(theta[1,0],theta[1,1])
+        
+        
+        #Unpacking parameters
+        
+        A0 = theta[0,0]
+        A_offPower = theta[2,0] * self.ThetaToOffProb(theta[3,0])
+        A_defPower = theta[4,0] * self.ThetaToDefProb(theta[5,0])
+        A_attack = theta[6,0]
+        A_stay = theta[7,0]
+           
+        B0 = theta[0,1]       
+        B_offPower = theta[2,1] * self.ThetaToOffProb(theta[3,1])
+        B_defPower = theta[4,1] * self.ThetaToDefProb(theta[5,1])
+        B_attack = theta[6,0]
+        B_stay = theta[7,0]
+       
+        
+      
+        # A attacks first
+        deltaB = getDeltaN(A0,A_offPower,A_attack, B0, B_defPower,B_stay)
+        deltaA = getDeltaN(B0-deltaB, B_offPower, B_attack, A0, A_defPower,A_stay)
+        FER1 = (deltaB / B0) / (deltaA / A0) #b-losses over a-losses
+        
+        # Simultanous fire
+        deltaB = getDeltaN(A0,A_offPower,A_attack, B0, B_defPower,B_stay)
+        deltaA = getDeltaN(B0, B_offPower, B_attack, A0, A_defPower,A_stay)
+        FER2 = (deltaB / B0) / (deltaA / A0) #b-losses over a-losses
+        
+        # B attacks first
+        deltaB = getDeltaN(A0,A_offPower,A_attack, B0, B_defPower,B_stay)
+        deltaA = getDeltaN(B0, B_offPower, B_attack, A0, A_defPower,A_stay)
+        FER3 = (deltaB / B0) / (deltaA / A0) #b-losses over a-losses
 
-    #         FER = (deltaB / B0) / (deltaA / A0) #b-losses over a-losses
-    #         if FER >= 1:
-    #             wins[0] += 1
-    #         else:
-    #             wins[1] += 1
-                
-    #     return [wins[i]/sum(wins) for i in (0,1)]
+        
+        p1_WinProb = FER1 * InitiativeProbs[0] + FER2 * InitiativeProbs[1] + FER3 * InitiativeProbs[2]
+        # print(p1_WinProb)
+        # returnVal = p1_WinProb * torch.tensor([1,1/p1_WinProb -1],requires_grad=True)
+        return p1_WinProb#, requires_grad = True)
         
         
     def OptimizeAction(self, State,Action,max_len=torch.tensor([1,1])): #this should use the battle function
 
         #this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
         iteration = 0
-        learningRate = 1/16
-        gradFlipper = torch.transpose(torch.tensor([ [-1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
+        learningRate = 1#1/16
+        gradFlipper = torch.tensor([-1.0,1.0]) #torch.transpose(torch.tensor([ [-1]*self.N_Technologies , [1] * self.N_Technologies]),0,-1)
         
 
         act_new = Action.clone()
         
         
         stat_0 = State.clone()
-        winprob_0 = self.Battle(self.techToParams(stat_0))
+        winprob_0 = self.SalvoBattle(self.techToParams(stat_0))
         
         def scoringFun(act_n):
            
@@ -235,12 +255,13 @@ class TorchGame():
             stat_n = self.Update_State(stat_0,act_n)
             
             theta_n = self.techToParams(stat_n)
-            win_prob = self.Battle(theta_n) 
+            # print(theta_n.requires_grad)
+            win_prob = self.SalvoBattle(theta_n) 
             
             score_n = win_prob #+ lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
             
             return score_n , win_prob    
-        while (iteration < 1500):# or torch.all(torch.norm(action_step):
+        while (iteration < 10):# or torch.all(torch.norm(action_step):
 
             act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
             score_n , win_prob_n = scoringFun(act_n)
@@ -250,11 +271,11 @@ class TorchGame():
             dA = act_n.grad
             
             action_step = gradFlipper * dA * learningRate
-            act_new = torch.add(act_n , action_step)
+            act_new = torch.clamp(torch.add(act_n , action_step),0,1)
             act_new = act_new / torch.sum(act_new,dim=0)
             
 
-            #print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
+            print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
             
            
             iteration +=1 
@@ -295,26 +316,30 @@ class TorchGame():
         start = time.time()
         self.Q.append((self.InitialState,0))
         
+        node_id = 0
         while (len(self.Q) > 0 and time.time() - start < 10):
+            
             st,t = self.Q.pop() #the state which we are currently examining
             #print(t)
             act = self.GetActions(st) # small number of nash equilibria
             for a in act:
-                self.History.append((st,a)) # adding the entering state and the exiting action to history, reward should probably also be added. 
-                                          
+                #self.History.append((st,a)) # adding the entering state and the exiting action to history, reward should probably also be added. 
+                # self.History.add_datapoint(st,a,nåt_anat)                         
                 
                 st_new = self.Update_State(st,a) #the resulting states of traversing along the nash equilibrium
                 if t+1 < self.Horizon:
-                    self.Q.append((st_new,t+1))
                     
+                    self.Q.append((st_new,t+1))
+                    node_id +=1
         return self.History
                 
              
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=5,N_actions=8,I=1.5,D=6)
+    FullGame = TorchGame(Horizon=5,N_actions=8, I=25, D = -5)
     
     hist = FullGame.Main()
+    # hist.save_to_file("hisoty123.csv")
     
     # print(FullGame.InitiativeProbabilities(4.0,4.0))
     # print(FullGame.InitiativeProbabilities(10.0,4.0))
