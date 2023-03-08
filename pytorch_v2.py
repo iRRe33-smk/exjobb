@@ -1,6 +1,6 @@
 import torch
-from torch.autograd import grad, Function,functional
-# import numpy as np
+# from torch.autograd import grad, Function,functional
+import numpy as np
 import time
 import json
 # import pandas as pd
@@ -19,13 +19,13 @@ def PCA(X : torch.Tensor):
     
 
 class TorchGame():
-    def __init__(self, N_Technologies =3, N_Capabilities = 6, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, Start_action_length = [1,1], I=3, D = 1) -> None:
+    def __init__(self, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, Start_action_length = [1,1], I=3, D = 1) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         #torch.manual_seed(1337)
         # global variables
-        self.N_Technologies = N_Technologies
-        self.N_Capabilities = N_Capabilities
+        #self.N_Technologies = N_Technologies
+        self.N_BattleParams = 8
         self.Horizon = Horizon
         self.N_actions_startpoint = N_actions_startpoint
         self.N_actions = N_actions
@@ -36,34 +36,53 @@ class TorchGame():
         
         
         #load data from file
-        # xi_parms = {
-        #                     "mu" : [0] * self.N_Technologies,
-        #                     "sigma" : [1]*self.N_Technologies
-        #                   }
-        with open("config_files/xi_params.json") as f:
-            xi_parms = json.load(f)
+        with open("citation_analysis/distribution_params.json") as f:
+            d = json.load(f)
+            mu = [d[el]["mu"] for el in d.keys()]
+            sigma = [d[el]["sigma"] for el in d.keys()]
+            
+            self.xi_params_mu = torch.tensor(mu)
+            self.xi_params_sigma = torch.tensor(sigma)
+            self.N_Technologies = len(mu)
+            
         
-        self.xi_params_mu = torch.tensor(xi_parms["mu"])
-        self.xi_params_sigma = torch.tensor(xi_parms["sigma"])
+
         
         self.FINAL_ACTIONS = []
-        # command and control, maneuver, intelligence, fires, sustainment, information, protection, and CIMIC
-        self.CapabilityNames = ["Fires", "Protection", "Maneuver","Information","Intelligence","Sustainment","C2"]
-        CapabilityMatrixShape = (2,N_Technologies,N_Capabilities)
-        numElems = 2 * N_Technologies * N_Capabilities
+
+        self.BattleParams_Names = ["A,B", "phi,psi", "n_a,n_b","p_a,p_b","n_y,n_z","p_y,p_z","u,v", "w,x"]
+        ParamConversionMatrixShape = (2,self.N_Technologies,self.N_BattleParams)
+        numElems = 2 * self.N_Technologies * self.N_BattleParams
         
-        self.CAPABILITYMATRIX = torch.reshape(
+        
+        self.PARAMCONVERSIONMATRIX = torch.clamp(torch.reshape(
             torch.normal(
-                mean = torch.tensor([1/self.N_Capabilities]*numElems), 
-                std= torch.tensor([0.05]*numElems)
+                mean = torch.tensor([1.0]*numElems), 
+                std= torch.tensor([0.5]*numElems)
                 ),
-            CapabilityMatrixShape
+            ParamConversionMatrixShape
+        ),min=0.1,max=3)
+        
+        initial_params = torch.tensor(
+            [[4,7],
+             [6,3], 
+             [4,5],
+             [.7,.6],
+             [3,3],
+             [.6,.6],
+             [1/3,1/3],
+             [1,1]
+             ]
         )
         
-        #creating the initalState
-        st = torch.rand(N_Technologies,2)
-        divisor = 0.01*(torch.sum(st,0)) # sum to 100
-        self.InitialState = torch.divide(st,divisor)
+        #This is pretty werid
+        initStates = [
+            torch.linalg.lstsq(
+                torch.transpose(self.PARAMCONVERSIONMATRIX[i,:,:].squeeze(),0,1),
+                initial_params[:,i].squeeze()).solution 
+            for i in range(2)]
+        self.InitialState = torch.stack(initStates,dim=-1)
+        print(self.InitialState)
         
         self.History = []
         self.Q = []
@@ -115,66 +134,119 @@ class TorchGame():
         
         return trl
 
-    def TechToCapa(self,State):
+    def techToParams(self,State):
         
         trl = self.TechnologyReadiness(State)
         
-        #capa_temp = torch.transpose(torch.transpose(self.CAPABILITYMATRIX,2,0),1,2)
+        #capa_temp = torch.transpose(torch.transpose(self.PARAMCONVERSIONMATRIX,2,0),1,2)
+        #2x10
+        theta = torch.matmul(trl,self.PARAMCONVERSIONMATRIX ).squeeze()
         
-        capabilities = torch.matmul(trl,self.CAPABILITYMATRIX ).squeeze()
-        
-        return capabilities
+        return theta
     
-    def Battle(self,Capabilities):
-        results = torch.sum(Capabilities,dim=1) / torch.sum(Capabilities)
+    def Battle(self,theta):
+        results = torch.sum(theta,dim=1) / torch.sum(theta)
         return results
     
-    def SalvoLikeBattle(self,Capabilities):
-        # ["Fires", "Protection", "Maneuver","Information","Intelligence","Sustainment","C2"]
-        # firstShotSkillDiff = torch.sum(Capabilities[1,[3,4,6]]) - torch.sum(Capabilities[1,[3,4,6]])
-        # firstShotAdvantage = torch.tanh(firstShotSkillDiff/10)
-        numParams = 5
-        capToParamMatrix = torch.rand((len(self.CapabilityNames),numParams))
+    def InitiativeProbabilities(self, phi,psi, sigma=1,c=1.25):
+        stdev = 1.4142*sigma
+        dist = torch.distributions.Normal(loc=phi-psi,scale = stdev)
         
-        battleParams = Capabilities @ capToParamMatrix
+        critval = torch.tensor(c*stdev)
+        
+        p1_favoured = 1-dist.cdf(critval)
+        neither_favoured = dist.cdf(critval) - dist.cdf(-critval)
+        p2_favoured = dist.cdf(-critval)
+        
+        return [p1_favoured, neither_favoured, p2_favoured ]
+    def SalvoBattle(self,theta):
+        theta = torch.transpose(theta,0,-1)
+        #deterministic salvo
+        def getDeltaN(theta1,theta2):
+            deltaP2 = (theta1[0] * theta1[2] * theta1[3] - theta2[0] * theta2[4] * theta2[5]) * theta1[6] / theta2[7]
+            return deltaP2
+        
+        # numDraws = 1000
+        # wins = [0,0]
+        
+        InitiativeProbs = self.InitiativeProbabilities(theta[1,0],theta[1,1])
+        # print(np.sum(InitiativeProbs))
+        # initiatives = np.random.choice(a = [-1,0,1], p = np.float32(InitiativeProbs), size = numDraws)
+        
+      
+        # for i in range(numDraws):
+            # init = initiatives[i]
+                
+            A0 = theta[0,0]
+            B0 = theta[0,1]            
+            if init == -1:
+
+                deltaB = getDeltaN(theta[:,0], theta[:,1])
+                theta[0,1] -= deltaB
+                
+                deltaA = getDeltaN(theta[:,1], theta[:,0])
+                theta[0,0] -= deltaA   
+                
+
+            elif init == 0:        
+                deltaA = getDeltaN(theta[:,1], theta[:,0])
+                deltaB = getDeltaN(theta[:,0], theta[:,1])
+                
+                theta[0,0] -= deltaA    
+                theta[0,1] -= deltaB
+                
+            elif init == 1:
+                deltaA = getDeltaN(theta[:,1], theta[:,0])
+                theta[0,0] -= deltaA 
+                
+                deltaB = getDeltaN(theta[:,0], theta[:,1])
+                theta[0,1] -= deltaB
+            
+
+            FER = (deltaB / B0) / (deltaA / A0) #b-losses over a-losses
+            if FER >= 1:
+                wins[0] += 1
+            else:
+                wins[1] += 1
+                
+        return [wins[i]/sum(wins) for i in (0,1)]
+        
+        
+        
+        
+    
         
         
        
         
          
-        return
     
     def OptimizeAction(self, State,Action,max_len=torch.tensor([1,1])): #this should use the battle function
-        
-        
-        
+
         #this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
-        eps = 10#1E-2
-        lower_log_barrier_scaler = 0#2
-        upper_log_barrier_scaler = 0#1/4
         iteration = 0
-        
-        learningRate = 2#1/16
+        learningRate = 1/16
         gradFlipper = torch.transpose(torch.tensor([ [-1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
+        
 
         act_new = Action.clone()
         
         
         stat_0 = State.clone()
-        winprob_0 = self.Battle(self.TechToCapa(stat_0))
+        winprob_0 = self.Battle(self.techToParams(stat_0))
         
         def scoringFun(act_n):
            
 
             stat_n = self.Update_State(stat_0,act_n)
             
-            capa_n = self.TechToCapa(stat_n)
-            win_prob = self.Battle(capa_n) 
+            theta_n = self.techToParams(stat_n)
+            win_prob = self.SalvoBattle(theta_n) 
             
             score_n = win_prob #+ lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
             
             return score_n , win_prob    
-        while iteration < 1500:
+        while (iteration < 1500):# or torch.all(torch.norm(action_step):
 
             act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
             score_n , win_prob_n = scoringFun(act_n)
@@ -182,11 +254,10 @@ class TorchGame():
             score_n.backward(score_n)#torch.ones_like(score_n))
 
             dA = act_n.grad
-            #hess = functional.hessian(scoringFun,act_n)
-            
             
             action_step = gradFlipper * dA * learningRate
             act_new = torch.add(act_n , action_step)
+            act_new = act_new / torch.sum(act_new,dim=0)
             
 
             #print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
@@ -247,27 +318,11 @@ class TorchGame():
              
 
 if __name__ == "__main__":
+    FullGame = TorchGame(Horizon=5,N_actions=8,I=1.5,D=6)
     
-    nTechs = 21
-    FullGame = TorchGame(N_Technologies=nTechs,Horizon=5,N_actions=8,I=1.5,D=6)
     hist = FullGame.Main()
     
-    numHist = len(hist)
-    
-    actions = torch.zeros((numHist,nTechs*2))    
-
-    # for i in range(numHist):
-    #     act = hist[i][1]
-    #     actions[i,:] = torch.flatten(act)
-        
-    # vals,vec,explained_variance = PCA(actions)
-    
-    # print(vals)
-    # print(vec)
-    # print(explained_variance)
-        
-    
-    
-    
-    #print(len(hist))
-
+    # print(FullGame.InitiativeProbabilities(4.0,4.0))
+    # print(FullGame.InitiativeProbabilities(10.0,4.0))
+    # print(FullGame.InitiativeProbabilities(14.0,14.0))
+    # print(FullGame.InitiativeProbabilities(20.0,4.0))
