@@ -161,69 +161,60 @@ class TorchGame():
         p2_favoured = dist.cdf(-critval)
         
         return [p1_favoured, neither_favoured, p2_favoured ]
-    def SalvoBattle(self,theta):
-        theta = torch.transpose(theta,0,-1)
-        #deterministic salvo
-        def getDeltaN(theta1,theta2,N1,N2):
-            deltaP2 = (N1 * theta1[2] * theta1[3] - N2 * theta2[4] * theta2[5]) * theta1[6] / theta2[7]
-            return deltaP2
+    # def SalvoBattle(self,theta):
+    #     theta = torch.transpose(theta,0,-1)
+    #     #deterministic salvo
+    #     def getDeltaN(theta1,theta2,N1,N2):
+    #         deltaP2 = (N1 * theta1[2] * theta1[3] - N2 * theta2[4] * theta2[5]) * theta1[6] / theta2[7]
+    #         return deltaP2
         
-        # numDraws = 1000
-        # wins = [0,0]
+    #     # numDraws = 1000
+    #     # wins = [0,0]
         
-        InitiativeProbs = self.InitiativeProbabilities(theta[1,0],theta[1,1])
-        # print(np.sum(InitiativeProbs))
-        # initiatives = np.random.choice(a = [-1,0,1], p = np.float32(InitiativeProbs), size = numDraws)
+    #     InitiativeProbs = self.InitiativeProbabilities(theta[1,0],theta[1,1])
+    #     # print(np.sum(InitiativeProbs))
+    #     # initiatives = np.random.choice(a = [-1,0,1], p = np.float32(InitiativeProbs), size = numDraws)
         
-        # p(p1_win | p1 inititative) = 40%, 
-        # p(p1_win | no inititative) = 35%
-        # p(p1_win | p2 inititative) = 25%
+    #     # p(p1_win | p1 inititative) = 40%, 
+    #     # p(p1_win | no inititative) = 35%
+    #     # p(p1_win | p2 inititative) = 25%
         
-        for init in [-1,0,1]:
-            A0 = theta[0,0]
-            B0 = theta[0,1]            
-            if init == -1:
+    #     for init in [-1,0,1]:
+    #         A0 = theta[0,0]
+    #         B0 = theta[0,1]            
+    #         if init == -1:
 
-                deltaB = getDeltaN(theta[:,0], theta[:,1],A0,B0)
-                theta[0,1] -= deltaB
+    #             deltaB = getDeltaN(theta[:,0], theta[:,1],A0,B0)
+    #             theta[0,1] -= deltaB
                 
-                deltaA = getDeltaN(theta[:,1], theta[:,0],B0-deltaB,A0)
-                theta[0,0] -= deltaA   
+    #             deltaA = getDeltaN(theta[:,1], theta[:,0],B0-deltaB,A0)
+    #             theta[0,0] -= deltaA   
                 
 
-            elif init == 0:        
-                deltaA = getDeltaN(theta[:,1], theta[:,0],A0,B0)
-                deltaB = getDeltaN(theta[:,0], theta[:,1])
+    #         elif init == 0:        
+    #             deltaA = getDeltaN(theta[:,1], theta[:,0],A0,B0)
+    #             deltaB = getDeltaN(theta[:,0], theta[:,1])
                 
-                # theta[0,0] -= deltaA    
-                # theta[0,1] -= deltaB
+    #             # theta[0,0] -= deltaA    
+    #             # theta[0,1] -= deltaB
                 
-            elif init == 1:
-                deltaA = getDeltaN(theta[:,1], theta[:,0])
-                theta[0,0] -= deltaA 
+    #         elif init == 1:
+    #             deltaA = getDeltaN(theta[:,1], theta[:,0])
+    #             theta[0,0] -= deltaA 
                 
-                deltaB = getDeltaN(theta[:,0], theta[:,1])
-                theta[0,1] -= deltaB
+    #             deltaB = getDeltaN(theta[:,0], theta[:,1])
+    #             theta[0,1] -= deltaB
             
 
-            FER = (deltaB / B0) / (deltaA / A0) #b-losses over a-losses
-            if FER >= 1:
-                wins[0] += 1
-            else:
-                wins[1] += 1
+    #         FER = (deltaB / B0) / (deltaA / A0) #b-losses over a-losses
+    #         if FER >= 1:
+    #             wins[0] += 1
+    #         else:
+    #             wins[1] += 1
                 
-        return [wins[i]/sum(wins) for i in (0,1)]
+    #     return [wins[i]/sum(wins) for i in (0,1)]
         
         
-        
-        
-    
-        
-        
-       
-        
-         
-    
     def OptimizeAction(self, State,Action,max_len=torch.tensor([1,1])): #this should use the battle function
 
         #this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
