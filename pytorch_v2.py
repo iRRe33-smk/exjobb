@@ -36,16 +36,24 @@ class TorchGame():
         self.History = []
         self.Q = []
 
+
+
+
         df_stat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="StartingState", header=0, index_col=0)
         print(df_stat)
         self.InitialState = torch.tensor(df_stat.astype(float).values)
 
         df_capaMat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="ConversionMatrix", header=0, index_col=0)
-        self.CAPABILITYMATRIX = torch.tensor(df_capaMat.astype(float).values)
+        self.PARAMCONVERSIONMATRIX = torch.tensor(df_capaMat.astype(float).values)
         print(df_capaMat)
 
 
-        self.N_Capabilities,  self.N_Technologies = self.CAPABILITYMATRIX.size()
+        self.N_Capabilities,  self.N_Technologies = self.PARAMCONVERSIONMATRIX.size()
+
+        with open("config_files/xi_params.json") as f:
+            params = json.load(f)
+            self.xi_params_mu = torch.tensor(params["mu"][:self.N_Technologies])
+            self.xi_params_sigma = torch.tensor(params["sigma"][:self.N_Technologies])
 
 
 
@@ -102,8 +110,8 @@ class TorchGame():
         
         #capa_temp = torch.transpose(torch.transpose(self.PARAMCONVERSIONMATRIX,2,0),1,2)
         #2x10
-        theta = torch.matmul(trl,self.PARAMCONVERSIONMATRIX ).squeeze()
-
+        # theta = torch.matmul(trl,self.PARAMCONVERSIONMATRIX ).squeeze()
+        theta = torch.matmul(self.PARAMCONVERSIONMATRIX, trl)
 
         return theta
     
@@ -187,7 +195,7 @@ class TorchGame():
         
         
         stat_0 = State.clone()
-        winprob_0 = self.Battle(self.techToParams(stat_0))
+        winprob_0 = self.S(self.techToParams(stat_0))
         
         def scoringFun(act_n):
            
