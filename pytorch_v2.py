@@ -21,7 +21,7 @@ def PCA(X: torch.Tensor):
 
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions=5, N_actions_startpoint=100, Start_action_length=[10, 10], I=1,
+    def __init__(self, Horizon=5, N_actions=5, N_actions_startpoint=100, Start_action_length=[10, 2], I=1,
                  D=3) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -49,6 +49,11 @@ class TorchGame():
         df_capaMat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="ConversionMatrix", header=0, index_col=0)
         self.PARAMCONVERSIONMATRIX = torch.tensor(df_capaMat.astype(float).values)
         print(df_capaMat)
+
+        df_baseParms = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="BaseParams", header=0, index_col=0)
+        self.baseLine_params = torch.tensor(df_baseParms.astype(float).values)
+
+
 
 
         self.N_Capabilities,  self.N_Technologies = self.PARAMCONVERSIONMATRIX.size()
@@ -101,7 +106,7 @@ class TorchGame():
 
     def TechnologyReadiness(self,State):
         
-        trl = torch.pow(1+torch.exp(-State*(1/self.I)+self.D),-1)
+        trl = torch.pow(1+torch.exp(-State * self.D + self.I), -1)
 
         
         return trl
@@ -110,7 +115,8 @@ class TorchGame():
 
         trl = self.TechnologyReadiness(State)
         
-        theta = torch.matmul(self.PARAMCONVERSIONMATRIX, trl)
+        theta = (1 + torch.matmul(self.PARAMCONVERSIONMATRIX * .1, trl))  * self.baseLine_params
+
 
         return theta
 
@@ -123,6 +129,7 @@ class TorchGame():
         stdev = 1.4142 * sigma
         dist = torch.distributions.Normal(loc=phi - psi, scale=stdev)
 
+        #TODO: verify parameter initiative probabiblity constant
         critval = torch.tensor(c * stdev)
 
         p1_favoured = 1 - dist.cdf(critval)
@@ -131,18 +138,20 @@ class TorchGame():
 
         return torch.tensor([p1_favoured, neither_favoured, p2_favoured])
 
-    def ThetaToDefProb(self, theta):
-        d = 5
-        c = 3
+    def ThetaToOffProb(self, theta):
+        #TODO : verify Parameter offensive probability
+        d = .5
+        i = 2
 
-        p = 1 / (1 + torch.exp(-1 * ((theta - d) / c)))
+        p = torch.pow(1 + torch.exp(-theta * d + i), -1)
         return p
 
-    def ThetaToOffProb(self, theta):
-        d = 2.5
-        c = 1.5
+    def ThetaToDefProb(self, theta):
+        # TODO: verify parameter defensive probability
+        d = .5
+        i = 1.5
 
-        p = 1 / (1 + torch.exp(-1 * ((theta - d) / c)))
+        p = torch.pow(1 + torch.exp(-theta * d + i), -1)
         return p
 
     def SalvoBattleStochasticWrapper(self, theta: torch.tensor):
@@ -167,10 +176,10 @@ class TorchGame():
     def SalvoBattleStochastic(self, theta: torch.tensor, A0, B0):
         # stochastistc salvo
 
-        theta = torch.transpose(theta, 0, -1)
+        # theta = torch.transpose(theta, 0, -1)
 
-        InitiativeProbs = self.InitiativeProbabilities(
-            theta[1, 0], theta[1, 1])
+        # InitiativeProbs = self.InitiativeProbabilities(
+        #     theta[1, 0], theta[1, 1])
 
         # Unpacking parameters
         # A0 = theta[0,0]
@@ -244,12 +253,29 @@ class TorchGame():
             scale=torch.sqrt(var_nominal_A)
         )
 
+        Prob_A_lives = (1 - A1_nominal_distr.cdf(mu_damage_AB/2))
+        Prob_B_lives = (1 - B1_nominal_distr.cdf(mu_damage_BA/2))
+
         # We assume playerA only seeks to deny opponent full control of area
         # PlayerB seeks full control
         # Swedish military doctrine seeks to delay the opponent and survive until mobilisation of nato asssets.
-        Prob_B_control = A1_nominal_distr.cdf(mu_damage_BA / 2) * (1 - B1_nominal_distr.cdf(mu_damage_AB / 2))
+        Prob_B_control = (1 - Prob_A_lives) * Prob_B_lives
 
-        return 1 - Prob_B_control, A1_nominal_distr, B1_nominal_distr
+        #probability of other outcomes
+        Prob_A_control = Prob_A_lives * (1 - Prob_B_lives)
+        Prob_stalemate = Prob_A_lives * Prob_B_lives
+        Prob_destruction = (1-Prob_A_lives) * (1 - Prob_B_lives)
+
+
+        return Prob_A_control + Prob_stalemate * .5, A1_nominal_distr, B1_nominal_distr
+
+        # Full calculations for reference
+        # Prob_A_control = (1 - A1_nominal_distr.cdf(mu_damage_AB/2)) * B1_nominal_distr.cdf(mu_damage_BA/2)
+        # Prob_B_control = A1_nominal_distr.cdf(mu_damage_BA / 2) * (1 - B1_nominal_distr.cdf(mu_damage_AB / 2))
+        # prob_stalemate = (1 - A1_nominal_distr.cdf(mu_damage_AB/2)) * (1- B1_nominal_distr.cdf(mu_damage_BA/2))
+        # prob_destruction = (A1_nominal_distr.cdf(mu_damage_AB/2)) * B1_nominal_distr.cdf(mu_damage_BA/2)
+
+        # return 1 - Prob_B_control, A1_nominal_distr, B1_nominal_distr
 
     def SalvoBattleDeterministic(self, theta: torch.tensor):
         # DeterministicSalvo
@@ -307,9 +333,9 @@ class TorchGame():
 
         # this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
         iteration = 0
-        learningRate = 1  # 1/16
+        learningRate = 2
         # torch.transpose(torch.tensor([ [-1]*self.N_Technologies , [1] * self.N_Technologies]),0,-1)
-        gradFlipper = torch.tensor([-1.0, 1.0])
+        gradFlipper = torch.tensor([1.0, -1.0])
 
         act_new = Action.clone()
 
@@ -327,36 +353,42 @@ class TorchGame():
             win_prob = self.SalvoBattleStochasticWrapper(theta_n)
 
             # + lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
-            score_n = win_prob
+            # score_n = win_prob
 
-            return score_n, win_prob
+            return win_prob, theta_n, stat_n
 
-        while (iteration < 10):  # or torch.all(torch.norm(action_step):
+        while (iteration < 1500):  # or torch.all(torch.norm(action_step):
 
             act_n = torch.tensor(act_new, requires_grad=True)  # .retain_grad()
-            score_n, win_prob_n = scoringFun(act_n)
+            score_n, theta_n, stat_n = scoringFun(act_n)
 
-            score_n.backward(score_n)  # torch.ones_like(score_n))
+            score_n.backward(score_n)
 
             dA = act_n.grad
 
             action_step = gradFlipper * dA * learningRate
             act_new = torch.clamp(torch.add(act_n, action_step), 0, 1000)
-            act_new = act_new / torch.sum(act_new, dim=0)
+            act_new = self.Plyers_action_length * act_new / torch.sum(act_new, dim=0)
 
+            diagnostics = [el.tolist()
+                           for el in
+                           [torch.sum(theta_n, dim=0), torch.sum(stat_n, dim=0), score_n,
+                            torch.norm(action_step, p=2, dim=0)]
+                           ]
             print(
-                f"norm(Action) = {torch.norm(act_new, p=2, dim=0)}, stepSize = {torch.norm(action_step, p=2, dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
-
+                f"sum_theta = {diagnostics[0]}, sum stat_n = {diagnostics[1]}, win_prob_n = {diagnostics[2]} \n norm_step = {diagnostics[3]}")
             iteration += 1
 
-            final_action = act_n.clone().detach()
+        final_action = act_n.clone().detach()
 
-            if final_action is not None:
-                self.FINAL_ACTIONS.append(final_action)
+        if final_action is not None:
+            self.FINAL_ACTIONS.append(final_action)
 
-        print(
-            f"norm(Action) = {torch.norm(act_new, p=2, dim=0)}, stepSize = {torch.norm(action_step, p=2, dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
-
+        diagnostics = [el.tolist()
+                       for el in
+                       [torch.sum(theta_n, dim=0), torch.sum(stat_n, dim=0), score_n, torch.norm(action_step, p=2, dim=0)]
+                       ]
+        print(f"sum_theta = {diagnostics[0]}, sum stat_n = {diagnostics[1]}, win_prob_n = {diagnostics[2]} \n norm_step = {diagnostics[3]}")
         return final_action
 
     # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
@@ -405,6 +437,7 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=5, N_actions=8, I=25, D=-5)
+    FullGame = TorchGame(Horizon=5, N_actions=8, I=5, D=2)
 
+    # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Main()
