@@ -20,7 +20,7 @@ def PCA(X : torch.Tensor):
     
 
 class TorchGame():
-    def __init__(self, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, Start_action_length = [1,1], I=3, D = 1) -> None:
+    def __init__(self, Horizon = 5, N_actions = 5, N_actions_startpoint = 10, Start_action_length = [1,1], I=3, D = 1) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         #torch.manual_seed(1337)
@@ -85,7 +85,7 @@ class TorchGame():
         self.InitialState = torch.stack(initStates,dim=-1)
         print(self.InitialState)
         
-        self.History = []
+        self.History = History()
         self.Q = []
     
     def _randomPointsInSphere(self,rad=1):
@@ -242,8 +242,9 @@ class TorchGame():
             
             return score_n , win_prob    
         
-        eps = 1e-6
-        while (iteration < 1500) or torch.norm(action_step) > eps:
+        eps = 1e-3
+        eps_bool = False
+        while (iteration < 3) or torch.norm(action_step) > eps:
 
             act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
             score_n , win_prob_n = scoringFun(act_n)
@@ -258,7 +259,8 @@ class TorchGame():
             
 
             #print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
-            
+            if torch.norm(action_step) <= eps:
+                eps_bool = True
            
             iteration +=1 
 
@@ -267,8 +269,8 @@ class TorchGame():
                 self.FINAL_ACTIONS.append(final_action)
     
         
-        print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
-        if torch.norm(final_action) <= eps:
+        #print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
+        if eps_bool:
             return final_action
         else:
             return
@@ -301,29 +303,32 @@ class TorchGame():
         return self.FilterActions(NashEquilibria)
     
     def Main(self):
-        hist = History()
-        start = time.time()
         node_id = 0
         self.Q.append((self.InitialState, 0, node_id))
+        self.History.add_data(node_id, None, 0, self.InitialState, None, 0)
         
-        while (len(self.Q) > 0 and time.time() - start < 10):
-            st, t, node = self.Q.pop() #the state which we are currently examining
+        while (len(self.Q) > 0): 
+            st, t, parent_node_id = self.Q.pop() #the state which we are currently examining
             act = self.GetActions(st) # small number of nash equilibria
+            print("Q: ", len(self.Q))
+            print("History: ", len(self.History.HistoryList))
             for a in act:
-                node_id += 1
-                hist.add_data(Node_id=node_id, Parent_id=node, Time=t, State=t, Action=a, Reward=0)
-                
                 st_new = self.Update_State(st,a) #the resulting states of traversing along the nash equilibrium
+                node_id += 1
+                self.History.add_data(node_id, parent_node_id, t+1, st_new, a, 0)
+    
                 if t+1 < self.Horizon:
-                    self.Q.append((st_new,t+1, node+1))    
+                    self.Q.append((st_new,t+1, node_id)) 
         return self.History
                 
              
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=5,N_actions=8,I=1.5,D=6)
+    FullGame = TorchGame(Horizon=6,N_actions=2,I=1.5,D=6)
     
     hist = FullGame.Main()
+    hist.plot_tree()
+    #hist.show_history()
     
     # print(FullGame.InitiativeProbabilities(4.0,4.0))
     # print(FullGame.InitiativeProbabilities(10.0,4.0))
