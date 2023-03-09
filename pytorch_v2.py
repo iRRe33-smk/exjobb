@@ -1,10 +1,8 @@
 import pandas
 import torch
-from torch.autograd import grad, Function,functional
-# import numpy as np
 import time
+import json
 import pandas as pd
-
 
 def PCA(X : torch.Tensor):
     covs = torch.cov(X)
@@ -20,9 +18,12 @@ def PCA(X : torch.Tensor):
     
 
 class TorchGame():
-    def __init__(self, N_Technologies =3, N_Capabilities = 6, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, Start_action_length = [1,1], I=3, D = 1) -> None:
+    def __init__(self, Horizon = 5, N_actions = 5, N_actions_startpoint = 25, Start_action_length = [1,1], I=3, D = 1) -> None:
+        self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+
         #torch.manual_seed(1337)
         # global variables
+        #self.N_Technologies = N_Technologies
         self.Horizon = Horizon
         self.N_actions_startpoint = N_actions_startpoint
         self.N_actions = N_actions
@@ -78,8 +79,11 @@ class TorchGame():
      
     def Update_State(self,State,Action):
         
-        #UpdateValue = randomness(Action) #implement stochasticity
-        UpdateValue = Action
+
+        xi_1 = torch.normal(mean=self.xi_params_mu,std = self.xi_params_sigma)
+        xi_2 = torch.normal(mean=self.xi_params_mu,std = self.xi_params_sigma)
+        xi = torch.exp(torch.stack((xi_1,xi_2), dim=-1))
+        UpdateValue = Action * xi
         
         newState = torch.add(State,UpdateValue)
         
@@ -88,65 +92,115 @@ class TorchGame():
     def TechnologyReadiness(self,State):
         
         trl = torch.pow(1+torch.exp(-State*(1/self.I)+self.D),-1)
-        #trl = torch.unsqueeze(torch.transpose(trl_temp,0,-1),1)
+
         
         return trl
 
-    def TechToCapa(self,State):
+    def techToParams(self,State):
         
         trl = self.TechnologyReadiness(State)
-        theta = torch.matmul(self.CAPABILITYMATRIX,trl)
+        
+        #capa_temp = torch.transpose(torch.transpose(self.PARAMCONVERSIONMATRIX,2,0),1,2)
+        #2x10
+        theta = torch.matmul(trl,self.PARAMCONVERSIONMATRIX ).squeeze()
+
 
         return theta
     
-    def Battle(self,Capabilities):
-        results = torch.sum(Capabilities,dim=1) / torch.sum(Capabilities)
+    def Battle(self,theta):
+        results = torch.sum(theta,dim=1) / torch.sum(theta)
         return results
     
-    def SalvoLikeBattle(self,Capabilities):
-        # ["Fires", "Protection", "Maneuver","Information","Intelligence","Sustainment","C2"]
-        # firstShotSkillDiff = torch.sum(Capabilities[1,[3,4,6]]) - torch.sum(Capabilities[1,[3,4,6]])
-        # firstShotAdvantage = torch.tanh(firstShotSkillDiff/10)
-        numParams = 5
-        capToParamMatrix = torch.rand((len(self.CapabilityNames),numParams))
+    def InitiativeProbabilities(self, phi,psi, sigma=1,c=1.25):
+
+        stdev = 1.4142*sigma
+        dist = torch.distributions.Normal(loc=phi-psi,scale = stdev)
+
+        critval = torch.tensor(c*stdev)
+
+        p1_favoured = 1-dist.cdf(critval)
+        neither_favoured = dist.cdf(critval) - dist.cdf(-critval)
+        p2_favoured = dist.cdf(-critval)
         
-        battleParams = Capabilities @ capToParamMatrix
+        return [p1_favoured, neither_favoured, p2_favoured ]
+    # def SalvoBattle(self,theta):
+    #     theta = torch.transpose(theta,0,-1)
+    #     #deterministic salvo
+    #     def getDeltaN(theta1,theta2,N1,N2):
+    #         deltaP2 = (N1 * theta1[2] * theta1[3] - N2 * theta2[4] * theta2[5]) * theta1[6] / theta2[7]
+    #         return deltaP2
         
         
-       
+    #     InitiativeProbs = self.InitiativeProbabilities(theta[1,0],theta[1,1])
+    #     # print(np.sum(InitiativeProbs))
+    #     # initiatives = np.random.choice(a = [-1,0,1], p = np.float32(InitiativeProbs), size = numDraws)
+
+    #     # p(p1_win | p1 inititative) = 40%,
+    #     # p(p1_win | no inititative) = 35%
+    #     # p(p1_win | p2 inititative) = 25%
         
-         
-        return
-    
+    #     for init in [-1,0,1]:
+    #         A0 = theta[0,0]
+    #         B0 = theta[0,1]
+    #         if init == -1:
+
+    #             deltaB = getDeltaN(theta[:,0], theta[:,1],A0,B0)
+    #             theta[0,1] -= deltaB
+
+    #             deltaA = getDeltaN(theta[:,1], theta[:,0],B0-deltaB,A0)
+    #             theta[0,0] -= deltaA
+
+
+    #         elif init == 0:
+    #             deltaA = getDeltaN(theta[:,1], theta[:,0],A0,B0)
+    #             deltaB = getDeltaN(theta[:,0], theta[:,1])
+
+    #             # theta[0,0] -= deltaA
+    #             # theta[0,1] -= deltaB
+
+    #         elif init == 1:
+    #             deltaA = getDeltaN(theta[:,1], theta[:,0])
+    #             theta[0,0] -= deltaA
+
+    #             deltaB = getDeltaN(theta[:,0], theta[:,1])
+    #             theta[0,1] -= deltaB
+
+
+    #         FER = (deltaB / B0) / (deltaA / A0) #b-losses over a-losses
+    #         if FER >= 1:
+    #             wins[0] += 1
+    #         else:
+    #             wins[1] += 1
+
+    #     return [wins[i]/sum(wins) for i in (0,1)]
+
+
     def OptimizeAction(self, State,Action,max_len=torch.tensor([1,1])): #this should use the battle function
 
         #this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
-        eps = 10#1E-2
-        lower_log_barrier_scaler = 0#2
-        upper_log_barrier_scaler = 0#1/4
         iteration = 0
-        
-        learningRate = 2#1/16
-        gradFlipper = torch.transpose(torch.tensor([ [1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
+        learningRate = 1/16
+        gradFlipper = torch.transpose(torch.tensor([ [-1]*self.N_Technologies , [-1] * self.N_Technologies]),0,-1)
+
 
         act_new = Action.clone()
         
         
         stat_0 = State.clone()
-        winprob_0 = self.Battle(self.TechToCapa(stat_0))
+        winprob_0 = self.Battle(self.techToParams(stat_0))
         
         def scoringFun(act_n):
            
-            act_len = torch.norm(act_n,p=2,dim=0)
+
             stat_n = self.Update_State(stat_0,act_n)
             
-            capa_n = self.TechToCapa(stat_n)
-            win_prob = self.Battle(capa_n) 
+            theta_n = self.techToParams(stat_n)
+            win_prob = self.Battle(theta_n)
             
             score_n = win_prob #+ lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
             
             return score_n , win_prob    
-        while iteration < 500:
+        while (iteration < 1500):# or torch.all(torch.norm(action_step):
 
             act_n = torch.tensor(act_new,requires_grad=True)#.retain_grad()
             score_n , win_prob_n = scoringFun(act_n)
@@ -154,16 +208,12 @@ class TorchGame():
             score_n.backward(score_n)#torch.ones_like(score_n))
 
             dA = act_n.grad
-            #hess = functional.hessian(scoringFun,act_n)
-            
             
             action_step = gradFlipper * dA * learningRate
             act_new = torch.add(act_n , action_step)
-                                
+            act_new = act_new / torch.sum(act_new,dim=0)
 
-            
             #print(f"norm(Action) = {torch.norm(act_new,p=2,dim=0)}, stepSize = {torch.norm(action_step,p=2,dim=0)}, winprob_0 = {winprob_0} winprob_n = {win_prob_n}")
-            
            
             iteration +=1 
 
@@ -178,6 +228,7 @@ class TorchGame():
         return final_action
         
     def FilterActions(self, Actions): #keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
+
         return Actions[:self.N_actions]
 
     def GetActions(self,State):
@@ -219,9 +270,6 @@ class TorchGame():
              
 
 if __name__ == "__main__":
-    
+    FullGame = TorchGame(Horizon=5,N_actions=8,I=1.5,D=6)
 
-    FullGame = TorchGame(Horizon=4, N_actions=5, I=1.5, D=6)
     hist = FullGame.Main()
-
-    print(hist)
