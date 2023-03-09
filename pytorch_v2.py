@@ -1,8 +1,10 @@
+import pandas
 import torch
 from torch.autograd import grad, Function,functional
 # import numpy as np
 import time
-# import pandas as pd
+import pandas as pd
+
 
 def PCA(X : torch.Tensor):
     covs = torch.cov(X)
@@ -21,8 +23,6 @@ class TorchGame():
     def __init__(self, N_Technologies =3, N_Capabilities = 6, Horizon = 5, N_actions = 5, N_actions_startpoint = 100, Start_action_length = [1,1], I=3, D = 1) -> None:
         #torch.manual_seed(1337)
         # global variables
-        self.N_Technologies = N_Technologies
-        self.N_Capabilities = N_Capabilities
         self.Horizon = Horizon
         self.N_actions_startpoint = N_actions_startpoint
         self.N_actions = N_actions
@@ -32,27 +32,22 @@ class TorchGame():
         self.D = D
         
         self.FINAL_ACTIONS = []
-        # command and control, maneuver, intelligence, fires, sustainment, information, protection, and CIMIC
-        self.CapabilityNames = ["Fires", "Protection", "Maneuver","Information","Intelligence","Sustainment","C2"]
-        CapabilityMatrixShape = (2,N_Technologies,N_Capabilities)
-        numElems = 2 * N_Technologies * N_Capabilities
-        
-        self.CAPABILITYMATRIX = torch.reshape(
-            torch.normal(
-                mean = torch.tensor([1/self.N_Capabilities]*numElems), 
-                std= torch.tensor([0.05]*numElems)
-                ),
-            CapabilityMatrixShape
-        )
-        
-        #creating the initalState
-        st = torch.rand(N_Technologies,2)
-        divisor = 0.01*(torch.sum(st,0)) # sum to 100
-        self.InitialState = torch.divide(st,divisor)
-        
         self.History = []
         self.Q = []
-    
+
+        df_stat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="StartingState", header=0, index_col=0)
+        print(df_stat)
+        self.InitialState = torch.tensor(df_stat.astype(float).values)
+
+        df_capaMat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="ConversionMatrix", header=0, index_col=0)
+        self.CAPABILITYMATRIX = torch.tensor(df_capaMat.astype(float).values)
+        print(df_capaMat)
+
+
+        self.N_Capabilities,  self.N_Technologies = self.CAPABILITYMATRIX.size()
+
+
+
     def _randomPointsInSphere(self,rad=1):
         #https://en.wikipedia.org/wiki/N-sphere#Spherical_coordinates
         
@@ -92,20 +87,17 @@ class TorchGame():
 
     def TechnologyReadiness(self,State):
         
-        trl_temp = torch.pow(1+torch.exp(-State*(1/self.I)+self.D),-1)
-        trl = torch.unsqueeze(torch.transpose(trl_temp,0,-1),1)
+        trl = torch.pow(1+torch.exp(-State*(1/self.I)+self.D),-1)
+        #trl = torch.unsqueeze(torch.transpose(trl_temp,0,-1),1)
         
         return trl
 
     def TechToCapa(self,State):
         
         trl = self.TechnologyReadiness(State)
-        
-        #capa_temp = torch.transpose(torch.transpose(self.CAPABILITYMATRIX,2,0),1,2)
-        
-        capabilities = torch.matmul(trl,self.CAPABILITYMATRIX ).squeeze()
-        
-        return capabilities
+        theta = torch.matmul(self.CAPABILITYMATRIX,trl)
+
+        return theta
     
     def Battle(self,Capabilities):
         results = torch.sum(Capabilities,dim=1) / torch.sum(Capabilities)
@@ -228,26 +220,8 @@ class TorchGame():
 
 if __name__ == "__main__":
     
-    nTechs = 21
-    FullGame = TorchGame(N_Technologies=nTechs,Horizon=4,N_actions=5,I=1.5,D=6)
+
+    FullGame = TorchGame(Horizon=4, N_actions=5, I=1.5, D=6)
     hist = FullGame.Main()
-    
-    numHist = len(hist)
-    
-    actions = torch.zeros((numHist,nTechs*2))    
 
-    # for i in range(numHist):
-    #     act = hist[i][1]
-    #     actions[i,:] = torch.flatten(act)
-        
-    # vals,vec,explained_variance = PCA(actions)
-    
-    # print(vals)
-    # print(vec)
-    # print(explained_variance)
-        
-    
-    
-    
-    #print(len(hist))
-
+    print(hist)
