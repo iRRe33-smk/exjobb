@@ -1,6 +1,6 @@
 import pandas
 import torch
-# from torch.autograd import grad, Function,functional
+from torch.autograd.functional import jacobian
 import numpy as np
 import time
 import json
@@ -21,7 +21,7 @@ def PCA(X: torch.Tensor):
 
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions=5, N_actions_startpoint=100, Start_action_length=[10, 2], I=1,
+    def __init__(self, Horizon=5, N_actions=5, N_actions_startpoint=100, Start_action_length=[10, 5], I=1,
                  D=3) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -328,67 +328,88 @@ class TorchGame():
         # returnVal = p1_WinProb * torch.tensor([1,1/p1_WinProb -1],requires_grad=True)
         return p1_WinProb
 
+    # def LSS(self, act):
     # this should use the battle function
+
+    def LSS(self, grad, jac, xi=1E-4):
+
+        def l(xi, grad, nu):
+            return  xi * (1 - torch.exp(- torch.norm(grad, p=2)))
+
+
+
+        z_step = torch.zeros_like(grad)
+        nu_step = torch.zeros_like(grad)
+        return z_step, nu_step
+
     def OptimizeAction(self, State, Action, max_len=torch.tensor([1, 1])):
 
         # this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
         iteration = 0
-        learningRate = 2
+        # learningRate = 2
         # torch.transpose(torch.tensor([ [-1]*self.N_Technologies , [1] * self.N_Technologies]),0,-1)
-        gradFlipper = torch.tensor([1.0, -1.0])
+        # gradFlipper = torch.tensor([1.0, -1.0])
 
-        act_new = Action.clone()
+        act_n = Action.clone().requires_grad_()
 
         stat_0 = State.clone()
         print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
         winprob_0 = self.SalvoBattleStochasticWrapper(self.techToParams(stat_0))
 
         def scoringFun(act_n):
-
-            stat_n = self.Update_State(stat_0, act_n)
+            act_norm = act_n * self.Plyers_action_length / torch.sum(act_n, dim=0)
+            stat_n = self.Update_State(stat_0, act_norm)
 
             theta_n = self.techToParams(stat_n)
             # print(theta_n.requires_grad)
 
             win_prob = self.SalvoBattleStochasticWrapper(theta_n)
 
-            # + lower_log_barrier_scaler*torch.log(act_len - eps) + upper_log_barrier_scaler*torch.log(max_len-act_len + eps)
-            # score_n = win_prob
 
-            return win_prob, theta_n, stat_n
+            return win_prob
 
-        while (iteration < 1500):  # or torch.all(torch.norm(action_step):
+        def T(X):
+            return torch.transpose(X, 0, -1)
 
-            act_n = torch.tensor(act_new, requires_grad=True)  # .retain_grad()
-            score_n, theta_n, stat_n = scoringFun(act_n)
+        def L(xi, omega, nu):
+            return xi * (1 - torch.exp(- torch.norm(omega, p=2)))
+
+        nu_n = 0.05 * torch.ones((self.N_Technologies * 2, 1))
+        while (iteration < 10000):  # or torch.all(torch.norm(action_step):
+
+
+            gamma1 = 5 # learning rate
+            gamma2 = 15 # learning rate
+            xi_1 = torch.tensor(1) # regularization, pushes solution towards NE
+            xi_2 = torch.tensor(1) # regularization, pushes solution towards NE
+
+            score_n = scoringFun(act_n)
 
             score_n.backward(score_n)
+            grad = act_n.grad
 
-            dA = act_n.grad
+            with torch.no_grad():
+                omega = torch.cat((grad[:, 0], -1 * grad[:, 1]), dim = 0).unsqueeze(dim=-1) # direction of best score at point act_n
+                jac = torch.cat((grad[:, 0], grad[:, 1]), dim = 0).unsqueeze(dim=-1) # jacobian of the same point. only sign difference
 
-            action_step = gradFlipper * dA * learningRate
-            act_new = torch.clamp(torch.add(act_n, action_step), 0, 1000)
-            act_new = self.Plyers_action_length * act_new / torch.sum(act_new, dim=0)
+                jTv = T(jac) @ nu_n
+                z_step = gamma1 * (omega + torch.exp(-xi_2 * torch.norm(jTv, p=2))) * jTv
+                nu_step = gamma2 * (T(jac) @ jac * nu_n) + L(xi_2, omega, nu_n) * nu_n - T(jac) @ omega
 
-            diagnostics = [el.tolist()
-                           for el in
-                           [torch.sum(theta_n, dim=0), torch.sum(stat_n, dim=0), score_n,
-                            torch.norm(action_step, p=2, dim=0)]
-                           ]
-            print(
-                f"sum_theta = {diagnostics[0]}, sum stat_n = {diagnostics[1]}, win_prob_n = {diagnostics[2]} \n norm_step = {diagnostics[3]}")
+                act_step = torch.zeros_like(act_n)
+                act_step[:, 0] -= z_step[:self.N_Technologies, 0]
+                act_step[:, 1] -= z_step[self.N_Technologies:, 0]
+
+                nu_n -= nu_step
+                act_n -= act_step
+                act_n.grad = None
+            if iteration % 100 == 0:
+                print(f"action step len: {torch.sum(act_step, dim=0)}, norm nu_ {torch.norm(nu_n, p=2)}")
+                print(f"action sum: {torch.sum(act_n, dim = 0) }, score : {score_n}")
+                print("\n ")
             iteration += 1
 
         final_action = act_n.clone().detach()
-
-        if final_action is not None:
-            self.FINAL_ACTIONS.append(final_action)
-
-        diagnostics = [el.tolist()
-                       for el in
-                       [torch.sum(theta_n, dim=0), torch.sum(stat_n, dim=0), score_n, torch.norm(action_step, p=2, dim=0)]
-                       ]
-        print(f"sum_theta = {diagnostics[0]}, sum stat_n = {diagnostics[1]}, win_prob_n = {diagnostics[2]} \n norm_step = {diagnostics[3]}")
         return final_action
 
     # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
@@ -437,7 +458,7 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=5, N_actions=8, I=5, D=2)
+    FullGame = TorchGame(Horizon=3, N_actions=2, I=5, D=2)
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Main()
