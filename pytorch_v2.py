@@ -20,7 +20,7 @@ def PCA(X: torch.Tensor):
 
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions=5, N_actions_startpoint=100, Start_action_length=[10, 5], I=1,
+    def __init__(self, Horizon=5, N_actions=5, N_actions_startpoint=100, Start_action_length=[1, 1], I=1,
                  D=3) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -30,7 +30,7 @@ class TorchGame():
         self.Horizon = Horizon
         self.N_actions_startpoint = N_actions_startpoint
         self.N_actions = N_actions
-        self.Plyers_action_length = torch.tensor(Start_action_length)
+        self.Players_action_length = torch.tensor(Start_action_length)
         # Used in TRL calculations
         self.I = I
         self.D = D
@@ -75,7 +75,7 @@ class TorchGame():
         
         r = params[:,-1] * rad
         phi = params[:,:-1] * torch.pi / 2
-        
+
         
         X = torch.ones(nPoints,nDim) 
         for i in range(nDim-1):
@@ -97,8 +97,9 @@ class TorchGame():
         xi_1 = torch.normal(mean=self.xi_params_mu, std=self.xi_params_sigma)
         xi_2 = torch.normal(mean=self.xi_params_mu, std=self.xi_params_sigma)
         xi = torch.exp(torch.stack((xi_1, xi_2), dim=-1))
-        UpdateValue = Action * xi
-
+        
+        #UpdateValue = Action * xi
+        UpdateValue = Action
         newState = torch.add(State, UpdateValue)
 
         return newState
@@ -157,7 +158,9 @@ class TorchGame():
 
     def SalvoBattleStochasticWrapper(self, theta: torch.tensor):
         # TODO: Distribution of remaining units have to be taken into account. Monte carlo?
-
+        
+        # MAXDEPTH = 3
+        # for (i in range(MAXDEPTH))
         initiativeProbabilities = self.InitiativeProbabilities(theta[1, 0], theta[1, 1])
 
         # No ititiative
@@ -177,17 +180,6 @@ class TorchGame():
     def SalvoBattleStochastic(self, theta: torch.tensor, A0, B0):
         # stochastistc salvo
 
-        # theta = torch.transpose(theta, 0, -1)
-
-        # InitiativeProbs = self.InitiativeProbabilities(
-        #     theta[1, 0], theta[1, 1])
-
-        # Unpacking parameters
-        # A0 = theta[0,0]
-        # B0 = theta[0,1]
-
-        # Player A
-        # A0 = theta[0, 0]
         A_offNum = theta[2, 0]
         A_offProb = self.ThetaToOffProb(theta[3, 0])
         A_offPower = A_offNum * A_offProb
@@ -196,13 +188,6 @@ class TorchGame():
         A_attack = theta[6, 0]
         A_stay = theta[7, 0]
 
-        mean_gross_A = A0 * A_offPower
-
-        # A_off_distr = torch.distributions.Normal(loc=mean_gross_A, scale=A0 * A_offPower * (1 - A_offProb))
-        # A_def_distr = torch.distributions.Normal(loc=A0 * A_defPower, scale=A0 * A_defPower * (1 - A_defProb))
-
-        # Player B
-        # B0 = theta[0, 1]
         B_offNum = theta[2, 1]
         B_offProb = self.ThetaToOffProb(theta[3, 1])
         B_offPower = B_offNum * B_offProb
@@ -266,10 +251,6 @@ class TorchGame():
         Prob_A_control = Prob_A_lives * (1 - Prob_B_lives)
         Prob_stalemate = Prob_A_lives * Prob_B_lives
         Prob_destruction = (1-Prob_A_lives) * (1 - Prob_B_lives)
-
-        # if torch.any(torch.isnan(torch.tensor([Prob_B_control, Prob_A_control, Prob_stalemate, Prob_destruction]))):
-        #     pass #asserting
-
 
         return Prob_A_control + Prob_stalemate * .5, A1_nominal_distr, B1_nominal_distr
 
@@ -336,8 +317,6 @@ class TorchGame():
 
         # this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
 
-
-
         #act_n = Action.clone().requires_grad_()
         stat_0 = State.clone()
         print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
@@ -349,8 +328,10 @@ class TorchGame():
 
         def scoringFun(z):
             act_n = stack_var(z)
+            assert ~torch.any(torch.isnan(act_n))
 
-            act_norm = act_n * self.Plyers_action_length / torch.sum(act_n, dim=0)
+            
+            act_norm = act_n * self.Players_action_length #/ torch.sum(act_n, dim=0)
             assert ~torch.any(torch.isnan(act_norm))
 
             stat_n = self.Update_State(stat_0, act_norm)
@@ -372,52 +353,61 @@ class TorchGame():
 
         z_n = torch.cat((Action[:,0], Action[:,1]), dim=0).unsqueeze(dim=-1).requires_grad_(True)
         nu_n = 0.05 * torch.ones((self.N_Technologies * 2, 1))
+
         grad_flipper = torch.tensor(
             [1.0 if i < self.N_Technologies else -1.0 for i in range(self.N_Technologies * 2)]
         ).unsqueeze(dim=-1)
 
+        hess_flipper = torch.zeros(size=(self.N_Technologies * 2, self.N_Technologies * 2))
+        hess_flipper[0:self.N_Technologies, :] = 1.0
+        hess_flipper[self.N_Technologies:, :] = -1.0
+        # block matrix [[+1,+1],
+        #               [-1,-1]]
+
+
+        convergence = False
         convergence_check = torch.tensor((1E-3, 1E-3, 1E-3, 1E-3))
         iteration = 0
-        while (iteration < 10000):  # or torch.all(torch.norm(action_step):
+
+        while (iteration < 10000 and ~convergence):  # or torch.all(torch.norm(action_step):
 
 
-            gamma1 = 5 # learning rate
-            gamma2 = 10 # learning rate
-            xi_1 = torch.tensor(1) # regularization, pushes solution towards NE
-            xi_2 = torch.tensor(1) # regularization, pushes solution towards NE
+            gamma1 = 4e-3 # learning rate
+            gamma2 = 5e-3 # learning rate
+            xi_1 = 1e-4 * torch.tensor(1) # regularization, pushes solution towards NE
+            xi_2 = 1e-4 * torch.tensor(1) # regularization, pushes solution towards NE
 
             score_n = scoringFun(z_n)
 
             score_n.backward(score_n)
             grad = z_n.grad
 
-            assert ~torch.any(torch.isnan(grad))
+            assert ~torch.any(torch.isnan(grad)), z_n
+                
 
             with torch.no_grad():
-                omega = grad
-                #jac = (grad * grad_flipper) # jacobian of the same point. only sign difference
-                hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze())
-
-                assert ~torch.any(torch.isnan(hess))
+                omega = grad * grad_flipper
+                # jac = (grad * grad_flipper) # jacobian of the same point. only sign difference
+                hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze()) * hess_flipper
+                #jac = jacobian(lambda z: scoringFun(z).grad, z_n)
+                assert ~torch.any(torch.isnan(hess)), z_n
 
                 hTv = T(hess) @ nu_n
                 z_step = gamma1 * (omega + torch.exp(-xi_2 * torch.norm(hTv, p=2)) * hTv)
                 nu_step = gamma2 * (T(hess) @ hess @ nu_n) + L(xi_1, omega) * nu_n - T(hess) @ omega
 
-                z_n = z_n - z_step
+                z_n -= z_step
                 z_n.requires_grad_(True)
                 nu_n -= nu_step
 
             if iteration % 100 == 0:
-                # print(f"action step len: {torch.sum(act_step, dim=0)}, norm nu_ {torch.norm(nu_n, p=2)}")
-                # print(f"action sum: {torch.sum(act_n, dim = 0) }, score : {score_n}")
+                
                 print(f"it: {iteration}, ||z_step||: {torch.norm(stack_var(z_step), p=2, dim = 0)}, ||nu||: {torch.norm(stack_var(nu_n), p=2, dim=0)}, winProb: {score_n}")
                 print("\n ")
             iteration += 1
 
-            if torch.all(torch.cat((torch.norm(stack_var(z_step),p=2, dim=0), torch.norm(stack_var(nu_n),p=2, dim=0))) <
-                    convergence_check):
-                break # we have converged
+            convergence =  torch.all(torch.cat((torch.norm(stack_var(z_step),p=2, dim=0), torch.norm(stack_var(nu_n),p=2, dim=0))) <
+                    convergence_check)
 
         print("new action\n \n ")
         final_action = stack_var(z_n)
@@ -432,21 +422,21 @@ class TorchGame():
 
         # ActionStartPoints = torch.rand(self.N_Technologies,2,self.N_actions_startpoint)
         P1_points = torch.transpose(self._randomPointsInSphere(
-            rad=self.Plyers_action_length[0]), 0, -1)
+            rad=self.Players_action_length[0]), 0, -1)
         P2_points = torch.transpose(self._randomPointsInSphere(
-            rad=self.Plyers_action_length[1]), 0, -1)
+            rad=self.Players_action_length[1]), 0, -1)
         ActionStartPoints = torch.stack((P1_points, P2_points), dim=1)
 
         NashEquilibria = []
         for i in range(self.N_actions_startpoint):
             init_action = ActionStartPoints[:, :, i]
             NE_action = self.OptimizeAction(
-                State, init_action, self.Plyers_action_length)
+                State, init_action, self.Players_action_length)
             NashEquilibria.append(NE_action)
 
         return self.FilterActions(NashEquilibria)
 
-    def Main(self):
+    def Run(self):
         start = time.time()
         self.Q.append((self.InitialState, 0))
 
@@ -472,4 +462,4 @@ if __name__ == "__main__":
     FullGame = TorchGame(Horizon=3, N_actions=2, I=5, D=2)
 
     # print(FullGame.techToParams(FullGame.InitialState))
-    hist = FullGame.Main()
+    hist = FullGame.Run()

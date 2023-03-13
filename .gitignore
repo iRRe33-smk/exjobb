@@ -1,3 +1,6 @@
 *venv/
 .vs/
 ~$*
+*.iml
+*xml
+*.pyc
