@@ -27,21 +27,21 @@ class History():
 
     def plot_tree(self):
         self.HistoryList = sorted(self.HistoryList, key=lambda d: d['Node_id'])
-
+        """
         for hist in self.HistoryList:
             if hist['Node_id'] == 0:
                 self.HistoryGraph.add_node(hist['Node_id'], label= "S0", layer= hist["Time"])
             else:
                 self.HistoryGraph.add_node(hist["Node_id"], label="S" + str(hist['Node_id']), layer= hist["Time"])
                 self.HistoryGraph.add_edge(hist["Node_id"], hist["Parent_id"])
-
-        """ for hist in self.HistoryList:
+        """
+        for hist in self.HistoryList:
             if hist['Node_id'] == 0:
                 self.HistoryTree.create_node("S0: win_prob=" + str(hist['Reward']) , 0) #root node
             else:
                 self.HistoryTree.create_node("S" + str(hist['Node_id']) + ": win_prob=" + str(hist['Reward']), hist['Node_id'], parent=hist['Parent_id'])
 
-        return self.HistoryTree.show() """
+        return self.HistoryTree.show()
 
         labels = nx.get_node_attributes(self.HistoryGraph, "label")
         options = {
