@@ -325,6 +325,13 @@ class TorchGame():
         def stack_var(z):
             return torch.stack((z[:self.N_Technologies], z[self.N_Technologies:]), dim=1).squeeze()
 
+        def normAction(z):
+            act_n = stack_var(z)
+            lim = 75.0
+            barrier = (torch.log(lim - act_n) - torch.log(torch.tensor([lim])))
+            exp_act = torch.exp(act_n) + barrier
+            act_norm = exp_act * self.Players_action_length / torch.sum(exp_act, dim=0)
+            return act_norm
 
         def scoringFun(z):
             act_n = stack_var(z)
