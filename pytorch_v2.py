@@ -20,7 +20,7 @@ def PCA(X: torch.Tensor):
 
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions=5, N_actions_startpoint=100, Start_action_length=[1, 1], I=1,
+    def __init__(self, Horizon=5, N_actions=3, N_actions_startpoint=3, Start_action_length=[1, 1], I=1,
                  D=3) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -92,21 +92,29 @@ class TorchGame():
         X = (r * torch.eye(nPoints)) @ X  # stretching by radius
         return X
 
+    def normAction(self, z):
+        act_n = stack_var(z)
+        lim = 75.0
+        barrier = (torch.log(lim - act_n) - torch.log(torch.tensor([lim])))
+        exp_act = torch.exp(act_n) + barrier
+        act_norm = exp_act * self.Players_action_length / torch.sum(exp_act, dim=0)
+        return act_norm
+
     def Update_State(self, State, Action):
 
         xi_1 = torch.normal(mean=self.xi_params_mu, std=self.xi_params_sigma)
         xi_2 = torch.normal(mean=self.xi_params_mu, std=self.xi_params_sigma)
         xi = torch.exp(torch.stack((xi_1, xi_2), dim=-1))
         
-        #UpdateValue = Action * xi
-        UpdateValue = Action
+        # UpdateValue = self.normAction(Action) * xi
+        UpdateValue = self.normAction(Action)
         newState = torch.add(State, UpdateValue)
 
         return newState
 
     def TechnologyReadiness(self,State):
         
-        trl = torch.pow(1+torch.exp(-State * self.D + self.I), -1)
+        trl = torch.pow(1+torch.exp(-State * self.D + self.I), -1) + torch.pow(1+torch.exp(-State * self.D + self.I * 3), -1)
 
         
         return trl
@@ -317,7 +325,6 @@ class TorchGame():
 
         # this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
 
-        #act_n = Action.clone().requires_grad_()
         stat_0 = State.clone()
         print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
         winprob_0 = self.SalvoBattleStochasticWrapper(self.techToParams(stat_0))
@@ -334,20 +341,17 @@ class TorchGame():
             return act_norm
 
         def scoringFun(z):
-            act_n = stack_var(z)
-            assert ~torch.any(torch.isnan(act_n))
 
-            
-            act_norm = act_n * self.Players_action_length #/ torch.sum(act_n, dim=0)
-            assert ~torch.any(torch.isnan(act_norm))
+            # act_norm = normAction(z)
+            # assert ~torch.any(torch.isnan(act_norm))
 
-            stat_n = self.Update_State(stat_0, act_norm)
+            stat_n = self.Update_State(stat_0, z)
             assert ~torch.any(torch.isnan(stat_n))
 
             theta_n = self.techToParams(stat_n)
             assert ~torch.any(torch.isnan(theta_n))
 
-            win_prob = self.Battle(theta_n)
+            win_prob = self.SalvoBattleStochasticWrapper(theta_n)
 
 
             return win_prob
@@ -376,48 +380,78 @@ class TorchGame():
         convergence_check = torch.tensor((1E-3, 1E-3, 1E-3, 1E-3))
         iteration = 0
 
-        while (iteration < 10000 and ~convergence):  # or torch.all(torch.norm(action_step):
+        while (iteration < 301 and ~convergence):  # or torch.all(torch.norm(action_step):
 
 
-            gamma1 = 4e-3 # learning rate
+            gamma1 = 4e-0 # learning rate
             gamma2 = 5e-3 # learning rate
             xi_1 = 1e-4 * torch.tensor(1) # regularization, pushes solution towards NE
             xi_2 = 1e-4 * torch.tensor(1) # regularization, pushes solution towards NE
 
             score_n = scoringFun(z_n)
-
-            score_n.backward(score_n)
+            score_n.backward()
             grad = z_n.grad
+            omega = grad * grad_flipper
 
-            assert ~torch.any(torch.isnan(grad)), z_n
-                
+            z_n.requires_grad_(True)
+            combined_x = scoringFun(z_n) + T(omega) @ nu_n
+            combined_x.backward()
+            g_x = z_n.grad[:self.N_Technologies]
+
+            z_n.requires_grad_(True)
+            combined_y = -scoringFun(z_n) + T(omega) @ nu_n
+            combined_y.backward()
+            g_y = z_n.grad[self.N_Technologies:]
+
+            nu_n.requires_grad_(True)
+            hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze()) * hess_flipper
+            combined_nu = torch.norm(hess @ nu_n - omega, p=2) ** 2 + L(xi_1, omega) * torch.norm(nu_n, p=2) ** 2
+            combined_nu.backward()
+            g_nu = nu_n.grad
+
 
             with torch.no_grad():
-                omega = grad * grad_flipper
-                # jac = (grad * grad_flipper) # jacobian of the same point. only sign difference
-                hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze()) * hess_flipper
-                #jac = jacobian(lambda z: scoringFun(z).grad, z_n)
-                assert ~torch.any(torch.isnan(hess)), z_n
+                z_step = torch.cat((gamma1 * g_x, -1 * gamma1 * g_y), dim=0)
+                z_n += z_step
 
-                hTv = T(hess) @ nu_n
-                z_step = gamma1 * (omega + torch.exp(-xi_2 * torch.norm(hTv, p=2)) * hTv)
-                nu_step = gamma2 * (T(hess) @ hess @ nu_n) + L(xi_1, omega) * nu_n - T(hess) @ omega
+                nu_step = gamma2 * g_nu
+                nu_n += nu_step
+            # print(g_x, g_y, g_nu)
 
-                z_n -= z_step
-                z_n.requires_grad_(True)
-                nu_n -= nu_step
+
+            #TODO : LSS?
+
+            # with torch.no_grad():
+            #     omega = grad * grad_flipper
+            #     # jac = (grad * grad_flipper) # jacobian of the same point. only sign difference
+            #     hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze()) * hess_flipper
+            #     #jac = jacobian(lambda z: scoringFun(z).grad, z_n)
+            #     assert ~torch.any(torch.isnan(hess)), z_n
+            #
+            #     hTv = T(hess) @ nu_n
+            #
+            #     z_step = gamma1 * (omega + torch.exp(-xi_2 * torch.norm(hTv, p=2)) * hTv)
+            #
+            #     nu_step = gamma2 * (T(hess) @ hess @ nu_n) + L(xi_1, omega) * nu_n - T(hess) @ omega
+            #
+            #     z_n += z_step
+            #     z_n.requires_grad_(True)
+            #     nu_n -= nu_step
 
             if iteration % 100 == 0:
                 
-                print(f"it: {iteration}, ||z_step||: {torch.norm(stack_var(z_step), p=2, dim = 0)}, ||nu||: {torch.norm(stack_var(nu_n), p=2, dim=0)}, winProb: {score_n}")
+                print(f"it: {iteration}, ||z_step||: {torch.norm(stack_var(z_step), p=2, dim = 0)},  ||nu||: {torch.norm(stack_var(nu_n), p=2, dim=0)}, winProb: {score_n}")
+                print(f"norm action: {torch.norm(z_n[:self.N_Technologies], p =2), torch.norm(z_n[self.N_Technologies:], p =2)}")
                 print("\n ")
             iteration += 1
 
-            convergence =  torch.all(torch.cat((torch.norm(stack_var(z_step),p=2, dim=0), torch.norm(stack_var(nu_n),p=2, dim=0))) <
+            convergence = torch.all(torch.cat((torch.norm(stack_var(z_step),p=2, dim=0), torch.norm(stack_var(nu_n),p=2, dim=0))) <
                     convergence_check)
 
         print("new action\n \n ")
-        final_action = stack_var(z_n)
+        final_action = z_n
+        print(Action)
+        print(final_action)
         return final_action
 
     # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
@@ -448,13 +482,13 @@ class TorchGame():
         self.Q.append((self.InitialState, 0))
 
         node_id = 0
-        while (len(self.Q) > 0 and time.time() - start < 10):
+        while (len(self.Q) > 0):# and time.time() - start < 10):
 
             st, t = self.Q.pop()  # the state which we are currently examining
             # print(t)
             act = self.GetActions(st)  # small number of nash equilibria
             for a in act:
-                # self.History.append((st,a)) # adding the entering state and the exiting action to history, reward should probably also be added.
+                self.History.append((st, a)) # adding the entering state and the exiting action to history, reward should probably also be added.
                 # self.History.add_datapoint(st,a,nåt_anat)
 
                 # the resulting states of traversing along the nash equilibrium
@@ -470,3 +504,5 @@ if __name__ == "__main__":
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Run()
+    print(hist)
+    print(len(hist))
