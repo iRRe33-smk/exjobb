@@ -19,6 +19,14 @@ def PCA(X: torch.Tensor):
     return vals, vec, explained_variance, comps
 
 
+class PseudoDistr():
+    def __init__(self, loc = 0, scale = 0 ):
+        self.loc = loc
+        self.scale = scale
+
+    def sample(self,num):
+        return torch.tensor([self.loc]*num[0])
+
 class TorchGame():
     def __init__(self, Horizon=5, N_actions=3, N_actions_startpoint=3, Start_action_length=[1, 1], I=1,
                  D=3) -> None:
@@ -169,9 +177,6 @@ class TorchGame():
 
     def SalvoBattleStochasticWrapper(self, theta: torch.tensor):
         # TODO: Distribution of remaining units have to be taken into account. Monte carlo?
-        
-        # MAXDEPTH = 3
-        # for (i in range(MAXDEPTH))
         initiativeProbabilities = self.InitiativeProbabilities(theta[1, 0], theta[1, 1])
 
         # No ititiative
@@ -187,6 +192,136 @@ class TorchGame():
                        initiativeProbabilities[2]
 
         return weighted_prob
+
+    def SalvoBattleIterative(self,theta: torch.tensor):
+
+        def flipTheta(theta):
+            return torch.stack((theta[:, 1], theta[:, 0]), dim=1)
+
+        weighted_results = 0
+        initiativeProbabilities = self.InitiativeProbabilities(theta[1, 0], theta[1, 1])
+
+        numSamples = 10
+        depth = 1
+
+        # A init
+        cumProb = 0
+        for i in range(numSamples):
+            A_n_distr = PseudoDistr(theta[0, 0])
+            B_n_distr = PseudoDistr(theta[0, 1])
+            for j in range(depth):
+                A_sample = A_n_distr.sample([1])
+                B_n_distr, p_B_lives = self.getNominalDefenders(theta, A_sample, B_n_distr.sample([1]))
+                A_n_distr, p_A_lives = self.getNominalDefenders(flipTheta(theta), B_n_distr.sample([1]), A_sample)
+
+            prob = 1 - (1 - p_A_lives.squeeze()) * p_B_lives.squeeze()  # Probability of B not winning. Any other results is good for player A
+            cumProb += prob
+        weighted_results += (cumProb / numSamples) * initiativeProbabilities[0]
+
+        #No init
+        cumProb = 0
+        for i in range(numSamples):
+            A_n_distr = PseudoDistr(theta[0,0])
+            B_n_distr = PseudoDistr(theta[0,1])
+            for j in range(depth):
+                B_sample = B_n_distr.sample([1])
+                A_sample = A_n_distr.sample([1])
+                A_n_distr, p_A_lives = self.getNominalDefenders(flipTheta(theta),  B_sample, A_sample)
+                B_n_distr, p_B_lives = self.getNominalDefenders(theta, A_sample,  B_sample)
+
+            prob = 1 - (1 - p_A_lives.squeeze()) * p_B_lives.squeeze()  # Probability of B not winning. Any other results is good for player A
+            cumProb += prob
+        weighted_results += (cumProb / numSamples) * initiativeProbabilities[1]
+
+
+
+        # B init
+        cumProb = 0
+        for i in range(numSamples):
+            A_n_distr = PseudoDistr(theta[0,0])
+            B_n_distr = PseudoDistr(theta[0,1])
+            for j in range(depth):
+                B_sample = B_n_distr.sample([1])
+                A_n_distr, p_A_lives = self.getNominalDefenders(flipTheta(theta),  B_sample, A_n_distr.sample([1]))
+                B_n_distr, p_B_lives = self.getNominalDefenders(theta, A_n_distr.sample([1]), B_sample)
+
+            prob = 1 - (1 - p_A_lives.squeeze()) * p_B_lives.squeeze()  # Probability of B not winning. Any other results is good for player A
+            cumProb += prob
+        weighted_results += (cumProb / numSamples) * initiativeProbabilities[2]
+
+        # B_n_distr = self.getNominalDefenders(theta, theta[0, 1], theta[0, 0])
+        # A_n_distr = self.getNominalDefenders(flipTheta(theta), B_n_distr.sample(1), theta[0, 0])
+        #
+        # #B init
+        # A_n_distr = self.getNominalDefenders(flipTheta(theta), theta[0, 1], theta[0, 0])
+        # B_n_distr = self.getNominalDefenders(flipTheta(theta), A_n_distr.sample(1), theta[0, 0])
+
+        return weighted_results
+    def getNominalDefenders(self, theta: torch.tensor, A0, B0):
+
+        with torch.no_grad():
+            if A0 < 0: # Attacker was wiped out in previous salvo. No return fire. And battle definetely lost
+                # B1_actual_distr, prob_B_lives
+                return torch.distributions.Normal(loc=0, scale=0.01), torch.tensor([0.0])
+
+        A_offNum = theta[2, 0]
+        A_offProb = self.ThetaToOffProb(theta[3, 0])
+        A_offPower = A_offNum * A_offProb
+        # A_defProb = self.ThetaToOffProb(theta[3, 0])
+        # A_defPower = theta[4, 0] * self.ThetaToDefProb(theta[5, 0])
+        A_attack = theta[6, 0]
+        # A_stay = theta[7, 0]
+
+        B_offNum = theta[2, 1]
+        B_offProb = self.ThetaToOffProb(theta[3, 1])
+        # B_offPower = B_offNum * B_offProb
+        B_defNum = theta[4, 1]
+        B_defProb = self.ThetaToDefProb(theta[5, 1])
+        B_defPower = B_defNum * B_defProb
+        # B_attack = theta[6, 1]
+        B_stay = theta[7, 1]
+
+        mu_damage_AB = A_attack / B_stay
+        sigma_damage_AB = .5
+
+        mean_net_AB = A0 * A_offPower - B0 * B_defPower
+        var_net_AB = A0 * A_offPower * (1 - A_offProb) + B0 * B_defPower * (1 - B_defProb)
+        AB_net_distr = torch.distributions.Normal(
+            loc=mean_net_AB,
+            scale=torch.sqrt(var_net_AB)
+        )
+
+        mean_nominal_B = B0 - mean_net_AB * mu_damage_AB
+        var_nominal_B = mean_net_AB * sigma_damage_AB + var_net_AB * mu_damage_AB ** 2 - \
+                        2 * sigma_damage_AB ** 2 * mean_net_AB * AB_net_distr.cdf(torch.tensor([0.0])) + \
+                        2 * sigma_damage_AB ** 2 * var_net_AB * torch.exp(AB_net_distr.log_prob(torch.tensor([0.0])))
+
+        B1_nominal_distr = torch.distributions.Normal(
+            loc=mean_nominal_B,
+            scale=torch.sqrt(var_nominal_B)
+        )
+
+        mean_actual_B = mean_nominal_B * (B1_nominal_distr.cdf(B0 - mu_damage_AB/2) - B1_nominal_distr.cdf(mu_damage_AB/2)) - \
+                        var_nominal_B * (torch.exp(B1_nominal_distr.log_prob(B0 - mu_damage_AB/2)) - torch.exp(B1_nominal_distr.log_prob(mu_damage_AB/2))) + \
+                        B0 *(1 - B1_nominal_distr.cdf(B0 - mu_damage_AB/2)) #+ 1E-3
+
+        var_actual_B = (mean_nominal_B ** 2 + var_nominal_B) * ( B1_nominal_distr.cdf(B0 - mu_damage_AB/2) - B1_nominal_distr.cdf(mu_damage_AB/2)) + \
+                        B0 ** 2 * (1 - B1_nominal_distr.cdf(B0 - mu_damage_AB/2)) - mean_actual_B ** 2 - \
+                        var_nominal_B * ((B0 - mu_damage_AB/2 + mean_nominal_B) * torch.exp(B1_nominal_distr.log_prob(B0 - mu_damage_AB/2)) - \
+                        (mu_damage_AB / 2 + mean_nominal_B) * torch.exp(B1_nominal_distr.log_prob(mu_damage_AB/2)))# + 1E-5
+
+        # assert mean_actual_B > -.1
+        # assert var_actual_B > 0
+
+        with torch.no_grad():
+            mean_actual_B = torch.clamp(mean_actual_B, min=0)
+            var_actual_B = torch.clamp(var_actual_B, min=0.01)
+
+        B1_actual_distr = torch.distributions.Normal(loc=mean_actual_B, scale = torch.sqrt(var_actual_B))
+
+        prob_B_lives = (1 - B1_nominal_distr.cdf(mu_damage_AB/2))
+        # prob_B_lives_actual = 1 - B1_actual_distr.cdf(mu_damage_AB/2)
+        return  B1_actual_distr, prob_B_lives
 
     def SalvoBattleStochastic(self, theta: torch.tensor, A0, B0):
         # stochastistc salvo
@@ -353,7 +488,7 @@ class TorchGame():
             theta_n = self.techToParams(stat_n)
             assert ~torch.any(torch.isnan(theta_n))
 
-            win_prob = self.SalvoBattleStochasticWrapper(theta_n)
+            win_prob = self.SalvoBattleIterative(theta_n)
 
 
             return win_prob
@@ -382,7 +517,7 @@ class TorchGame():
         convergence_check = torch.tensor((1E-3, 1E-3, 1E-3, 1E-3))
         iteration = 0
 
-        while (iteration < 1000 and  not convergence):  # or torch.all(torch.norm(action_step):
+        while (iteration < 150 and  not convergence):  # or torch.all(torch.norm(action_step):
 
 
             gamma1 = 4e-0 # learning rate
@@ -450,7 +585,7 @@ class TorchGame():
                 
                 print(f"it: {iteration}, ||z_step||: {torch.norm(self.stack_var(z_step), p=2, dim = 0)},  ||nu||: {torch.norm(self.stack_var(nu_n), p=2, dim=0)}, winProb: {score_n}")
                 print(f"norm action: {torch.norm(z_n[:self.N_Technologies], p =2), torch.norm(z_n[self.N_Technologies:], p =2)}")
-                # print(f"omega < eps: {torch.abs(omega) < 1E-3}")
+                print(f"score: {score_n}")
                 print("\n ")
 
             # convergence = torch.all(torch.cat((torch.norm(self.stack_var(z_step),p=2, dim=0), torch.norm(self.stack_var(nu_n),p=2, dim=0))) <

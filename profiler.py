@@ -1,8 +1,13 @@
 import pytorch_v2
-import cProfile
-import re
+def main():
+    game = pytorch_v2.TorchGame(Horizon = 1, N_actions= 1, N_actions_startpoint= 1, I=5, D=2)
+    game.Run()
 
+def test():
+    sum = 0
+    for i in  range(10000):
+        sum += (i % 5123) * 2
+        sum = sum % 1236
+    return f"test done, final value : {sum}"
 if __name__ == "__main__":
-    cProfile.run('re.compile("foo|bar")')
-    FullGame = pytorch_v2.TorchGame(Horizon=3, N_actions=2, I=5, D=2)
-    FullGame.Run()
+    main()
