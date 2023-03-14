@@ -92,8 +92,11 @@ class TorchGame():
         X = (r * torch.eye(nPoints)) @ X  # stretching by radius
         return X
 
+    def stack_var(self, z):
+        return torch.stack((z[:self.N_Technologies], z[self.N_Technologies:]), dim=1).squeeze()
+
     def normAction(self, z):
-        act_n = stack_var(z)
+        act_n = self.stack_var(z)
         lim = 75.0
         barrier = (torch.log(lim - act_n) - torch.log(torch.tensor([lim])))
         exp_act = torch.exp(act_n) + barrier
@@ -180,10 +183,10 @@ class TorchGame():
         # Initiative B
         prob_B = self.SalvoBattleStochastic(theta, A1_distr.mean, theta[0, 1])[0]
 
-        weithed_prob = prob_0[0] * initiativeProbabilities[0] + prob_A * initiativeProbabilities[1] + prob_B * \
+        weighted_prob = prob_0[0] * initiativeProbabilities[0] + prob_A * initiativeProbabilities[1] + prob_B * \
                        initiativeProbabilities[2]
 
-        return weithed_prob
+        return weighted_prob
 
     def SalvoBattleStochastic(self, theta: torch.tensor, A0, B0):
         # stochastistc salvo
@@ -329,16 +332,15 @@ class TorchGame():
         print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
         winprob_0 = self.SalvoBattleStochasticWrapper(self.techToParams(stat_0))
 
-        def stack_var(z):
-            return torch.stack((z[:self.N_Technologies], z[self.N_Technologies:]), dim=1).squeeze()
 
-        def normAction(z):
-            act_n = stack_var(z)
-            lim = 75.0
-            barrier = (torch.log(lim - act_n) - torch.log(torch.tensor([lim])))
-            exp_act = torch.exp(act_n) + barrier
-            act_norm = exp_act * self.Players_action_length / torch.sum(exp_act, dim=0)
-            return act_norm
+
+        # def normAction(self,z):
+        #     act_n = self.stack_var(z)
+        #     lim = 75.0
+        #     barrier = (torch.log(lim - act_n) - torch.log(torch.tensor([lim])))
+        #     exp_act = torch.exp(act_n) + barrier
+        #     act_norm = exp_act * self.Players_action_length / torch.sum(exp_act, dim=0)
+        #     return act_norm
 
         def scoringFun(z):
 
@@ -360,7 +362,7 @@ class TorchGame():
             return torch.transpose(X, 0, -1)
 
         def L(xi, omega):
-            return xi * (1 - torch.exp(- torch.norm(omega, p=2)))
+            return xi * (1 - torch.exp(- torch.norm(omega, p=2))**2)
 
         z_n = torch.cat((Action[:,0], Action[:,1]), dim=0).unsqueeze(dim=-1).requires_grad_(True)
         nu_n = 0.05 * torch.ones((self.N_Technologies * 2, 1))
@@ -380,7 +382,7 @@ class TorchGame():
         convergence_check = torch.tensor((1E-3, 1E-3, 1E-3, 1E-3))
         iteration = 0
 
-        while (iteration < 301 and ~convergence):  # or torch.all(torch.norm(action_step):
+        while (iteration < 1000 and  not convergence):  # or torch.all(torch.norm(action_step):
 
 
             gamma1 = 4e-0 # learning rate
@@ -391,7 +393,7 @@ class TorchGame():
             score_n = scoringFun(z_n)
             score_n.backward()
             grad = z_n.grad
-            omega = grad * grad_flipper
+            omega = torch.detach(grad * grad_flipper)
 
             z_n.requires_grad_(True)
             combined_x = scoringFun(z_n) + T(omega) @ nu_n
@@ -438,15 +440,21 @@ class TorchGame():
             #     z_n.requires_grad_(True)
             #     nu_n -= nu_step
 
+
+            iteration += 1
+            if iteration > 100:
+                omega_convergence = torch.abs(omega) < 1E-3
+                convergence = torch.all(omega_convergence)
+
             if iteration % 100 == 0:
                 
-                print(f"it: {iteration}, ||z_step||: {torch.norm(stack_var(z_step), p=2, dim = 0)},  ||nu||: {torch.norm(stack_var(nu_n), p=2, dim=0)}, winProb: {score_n}")
+                print(f"it: {iteration}, ||z_step||: {torch.norm(self.stack_var(z_step), p=2, dim = 0)},  ||nu||: {torch.norm(self.stack_var(nu_n), p=2, dim=0)}, winProb: {score_n}")
                 print(f"norm action: {torch.norm(z_n[:self.N_Technologies], p =2), torch.norm(z_n[self.N_Technologies:], p =2)}")
+                # print(f"omega < eps: {torch.abs(omega) < 1E-3}")
                 print("\n ")
-            iteration += 1
 
-            convergence = torch.all(torch.cat((torch.norm(stack_var(z_step),p=2, dim=0), torch.norm(stack_var(nu_n),p=2, dim=0))) <
-                    convergence_check)
+            # convergence = torch.all(torch.cat((torch.norm(self.stack_var(z_step),p=2, dim=0), torch.norm(self.stack_var(nu_n),p=2, dim=0))) <
+            #         convergence_check)
 
         print("new action\n \n ")
         final_action = z_n
