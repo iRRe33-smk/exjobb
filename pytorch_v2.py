@@ -4,19 +4,10 @@ from torch.autograd.functional import jacobian, hessian
 import time
 import json
 import pandas as pd
-
-def PCA(X: torch.Tensor):
-    covs = torch.cov(X)
-    covs.type(torch.complex64)
-
-    vals, vec = torch.linalg.eig(covs)
-
-    explained_variance = torch.cumsum(
-        torch.abs(vals), -1) / torch.sum(torch.abs(vals))
-
-    comps = vec @ covs
-
-    return vals, vec, explained_variance, comps
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import StandardScaler
+from matplotlib import pyplot as plt
 
 
 class PseudoDistr():
@@ -28,7 +19,7 @@ class PseudoDistr():
         return torch.tensor([self.loc]*num[0])
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions=3, N_actions_startpoint=3, Start_action_length=[1, 1], I=1,
+    def __init__(self, Horizon=5, N_actions=10, N_actions_startpoint=30, Start_action_length=[1, 1], I=1,
                  D=3) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -464,7 +455,7 @@ class TorchGame():
         # this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
 
         stat_0 = State.clone()
-        print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
+        #print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
         winprob_0 = self.SalvoBattleStochasticWrapper(self.techToParams(stat_0))
 
 
@@ -517,27 +508,25 @@ class TorchGame():
         convergence_check = torch.tensor((1E-3, 1E-3, 1E-3, 1E-3))
         iteration = 0
 
-        while (iteration < 150 and  not convergence):  # or torch.all(torch.norm(action_step):
-
-
+        while (iteration < 10 and  not convergence):  # or torch.all(torch.norm(action_step):
             gamma1 = 4e-0 # learning rate
             gamma2 = 5e-3 # learning rate
             xi_1 = 1e-4 * torch.tensor(1) # regularization, pushes solution towards NE
             xi_2 = 1e-4 * torch.tensor(1) # regularization, pushes solution towards NE
 
             score_n = scoringFun(z_n)
-            score_n.backward()
+            score_n.backward(retain_graph=True)
             grad = z_n.grad
             omega = torch.detach(grad * grad_flipper)
 
             z_n.requires_grad_(True)
             combined_x = scoringFun(z_n) + T(omega) @ nu_n
-            combined_x.backward()
+            combined_x.backward(retain_graph=True)
             g_x = z_n.grad[:self.N_Technologies]
 
             z_n.requires_grad_(True)
             combined_y = -scoringFun(z_n) + T(omega) @ nu_n
-            combined_y.backward()
+            combined_y.backward(retain_graph=True)
             g_y = z_n.grad[self.N_Technologies:]
 
             nu_n.requires_grad_(True)
@@ -591,16 +580,104 @@ class TorchGame():
             # convergence = torch.all(torch.cat((torch.norm(self.stack_var(z_step),p=2, dim=0), torch.norm(self.stack_var(nu_n),p=2, dim=0))) <
             #         convergence_check)
 
-        print("new action\n \n ")
+        #print("new action\n \n ")
         final_action = z_n
-        print(Action)
-        print(final_action)
+        #print(Action)
+        #print(final_action)
         return final_action
 
     # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
     def FilterActions(self, Actions):
-        # TODO : select only clustered actions, wich have converged
-        return Actions[:self.N_actions]
+        def PCA(Actions):
+            a_mat = torch.cat((Actions), dim=1) #ska denna transponeras HJÄLP
+            a_mat = torch.transpose(a_mat, 0, -1)
+            m, n = a_mat.size()
+            q = 3
+            (U, S, V) = torch.pca_lowrank(a_mat, q=min(q,m,n))
+            return (U, S, V)
+        
+        def k_means_elbow(dataset):
+            sum_of_squared_distances = []
+            K = range(1,10)
+            for num_clusters in K:
+                kmeans = KMeans(
+                    init= "random",
+                    n_clusters=num_clusters,
+                    n_init=10,
+                    max_iter=300,
+                    random_state=42
+                )
+                kmeans.fit(dataset)
+                sum_of_squared_distances.append(kmeans.inertia_)
+
+            plt.plot(K,sum_of_squared_distances,'bx-')
+            plt.xlabel('Values of K') 
+            plt.ylabel('Sum of squared distances/Inertia') 
+            plt.title('Elbow Method For Optimal k')
+            plt.show()
+
+            optimal_k = 5
+            return optimal_k
+
+        def k_means_siluette_analysis(dataset, plot):
+            range_n_clusters = range(2,self.N_actions_startpoint)
+            silhouette_avg = []
+            for num_clusters in range_n_clusters:
+            
+                # initialise kmeans
+                kmeans = KMeans(
+                    init= "random",
+                    n_clusters=num_clusters,
+                    n_init=10,
+                    max_iter=300,
+                    random_state=42
+                )
+                kmeans.fit(dataset)
+                cluster_labels = kmeans.labels_
+                
+                # silhouette score
+                silhouette_avg.append(silhouette_score(dataset, cluster_labels))
+            if plot:
+                plt.plot(range_n_clusters,silhouette_avg,'bx-')
+                plt.xlabel('Values of K') 
+                plt.ylabel('Silhouette score') 
+                plt.title('Silhouette analysis For Optimal k')
+                plt.show()
+
+            c = 7 # To control the maximum number of clusters the algorithm chooses, change this parameter
+            max_score = max(silhouette_avg[0:c]) 
+            optimal_k = silhouette_avg.index(max_score)+2
+
+            return optimal_k
+        
+        def k_means(U):
+            u = U.detach().numpy()
+            # Choose optimal number of clusters with siluette analysis
+            k = k_means_siluette_analysis(u, plot=False)
+            #k = k_means_elbow(u)
+            
+            kmeans = KMeans(
+                init= "random",
+                n_clusters=k,
+                n_init=10,
+                max_iter=300,
+                random_state=42
+            )
+            kmeans.fit(u)
+
+            return kmeans.cluster_centers_, k
+
+        U, S, V = PCA(Actions)
+        centers, n_acts = k_means(U)
+        centers = torch.tensor(centers)
+        actions = torch.matmul(V, torch.transpose(centers, dim0=0, dim1=-1))
+        acts = []
+        for a in range(1,n_acts+1):
+            acts.append(actions[:,a-1:a])
+
+        print(f"Number of actions taken after filtration: {n_acts}")
+        
+        return  acts
 
     def GetActions(self, State):
 
@@ -643,9 +720,9 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=3, N_actions=2, I=5, D=2)
+    FullGame = TorchGame(Horizon=3, N_actions=3, I=5, D=2)
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Run()
-    print(hist)
+    #print(hist)
     print(len(hist))
