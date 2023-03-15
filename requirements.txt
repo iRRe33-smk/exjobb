@@ -5,3 +5,4 @@ torch
 ipykernel
 pandas
 openpyxl
+scikit-learn
