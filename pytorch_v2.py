@@ -38,7 +38,7 @@ class TorchGame():
 
 
         self.FINAL_ACTIONS = []
-        self.History = []
+        self.History = History()
         self.Q = []
 
 
