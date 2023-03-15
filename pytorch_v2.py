@@ -276,8 +276,8 @@ class TorchGame():
         A_attack = theta[6, 0]
         # A_stay = theta[7, 0]
 
-        B_offNum = theta[2, 1]
-        B_offProb = self.ThetaToOffProb(theta[3, 1])
+        # B_offNum = theta[2, 1]
+        # B_offProb = self.ThetaToOffProb(theta[3, 1])
         # B_offPower = B_offNum * B_offProb
         B_defNum = theta[4, 1]
         B_defProb = self.ThetaToDefProb(theta[5, 1])
@@ -292,7 +292,8 @@ class TorchGame():
         var_net_AB = A0 * A_offPower * (1 - A_offProb) + B0 * B_defPower * (1 - B_defProb)
         AB_net_distr = torch.distributions.Normal(
             loc=mean_net_AB,
-            scale=torch.sqrt(var_net_AB)
+            scale=torch.sqrt(var_net_AB),
+            validate_args=False
         )
 
         mean_nominal_B = B0 - mean_net_AB * mu_damage_AB
@@ -302,7 +303,8 @@ class TorchGame():
 
         B1_nominal_distr = torch.distributions.Normal(
             loc=mean_nominal_B,
-            scale=torch.sqrt(var_nominal_B)
+            scale=torch.sqrt(var_nominal_B),
+            validate_args=False
         )
 
         mean_actual_B = mean_nominal_B * (B1_nominal_distr.cdf(B0 - mu_damage_AB/2) - B1_nominal_distr.cdf(mu_damage_AB/2)) - \
@@ -321,7 +323,9 @@ class TorchGame():
             mean_actual_B = torch.clamp(mean_actual_B, min=0)
             var_actual_B = torch.clamp(var_actual_B, min=0.01)
 
-        B1_actual_distr = torch.distributions.Normal(loc=mean_actual_B, scale = torch.sqrt(var_actual_B))
+        B1_actual_distr = torch.distributions.Normal(loc=mean_actual_B,
+                                                     scale = torch.sqrt(var_actual_B),
+                                                     validate_args=False)
 
         prob_B_lives = (1 - B1_nominal_distr.cdf(mu_damage_AB/2))
         # prob_B_lives_actual = 1 - B1_actual_distr.cdf(mu_damage_AB/2)
@@ -592,7 +596,7 @@ class TorchGame():
                 # fun_nu = lambda nu: torch.norm(hess @ nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
                 # g_nu = ft_jacobian(fun_nu)(nu_n)
 
-                z_step = torch.cat((gamma1 * g_x, -1 * gamma1 * g_y), dim=0)
+                z_step = torch.cat((gamma1 * g_x, gamma1 * g_y), dim=0)
                 z_n += z_step#.unsqueeze(dim = 1)
 
                 nu_step = gamma2 * g_nu
