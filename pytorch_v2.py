@@ -1,5 +1,5 @@
 import torch
-from torch.autograd.functional import jacobian, hessian#, hvp, vhp
+from torch.autograd.functional import jacobian, hessian, hvp, vhp
 #from functorch import jvp, vmap
 #from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
 # import numpy as np
@@ -8,6 +8,7 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from matplotlib import pyplot as plt
+# plt.ion()
 
 
 class PseudoDistr():
@@ -90,7 +91,8 @@ class TorchGame():
             # print(f"s{j}")
 
         X = (r * torch.eye(nPoints)) @ X  # stretching by radius
-        return X
+        log_X = torch.log(X)
+        return log_X
 
     def stack_var(self, z):
         return torch.stack((z[:self.N_Technologies], z[self.N_Technologies:]), dim=1).squeeze()
@@ -141,7 +143,7 @@ class TorchGame():
         stdev = 1.4142 * sigma
         # if phi - psi is None:
         #     pass #assertion
-        dist = torch.distributions.Normal(loc=phi - psi, scale=stdev)
+        dist = torch.distributions.Normal(loc=phi - psi, scale=stdev, validate_args=False)
 
         #TODO: verify parameter initiative probabiblity constant
         critval = torch.tensor(c * stdev)
@@ -258,7 +260,7 @@ class TorchGame():
         with torch.no_grad():
             if A0 < 0: # Attacker was wiped out in previous salvo. No return fire. And battle definetely lost
                 # B1_actual_distr, prob_B_lives
-                return torch.distributions.Normal(loc=0, scale=0.01), torch.tensor([0.0])
+                return torch.distributions.Normal(loc=0, scale=0.01, validate_args=False), torch.tensor([0.0])
 
         A_offNum = theta[2, 0]
         A_offProb = self.ThetaToOffProb(theta[3, 0])
@@ -284,7 +286,8 @@ class TorchGame():
         var_net_AB = A0 * A_offPower * (1 - A_offProb) + B0 * B_defPower * (1 - B_defProb)
         AB_net_distr = torch.distributions.Normal(
             loc=mean_net_AB,
-            scale=torch.sqrt(var_net_AB)
+            scale=torch.sqrt(var_net_AB),
+            validate_args=False
         )
 
         mean_nominal_B = B0 - mean_net_AB * mu_damage_AB
@@ -294,7 +297,8 @@ class TorchGame():
 
         B1_nominal_distr = torch.distributions.Normal(
             loc=mean_nominal_B,
-            scale=torch.sqrt(var_nominal_B)
+            scale=torch.sqrt(var_nominal_B),
+            validate_args=False
         )
 
         mean_actual_B = mean_nominal_B * (B1_nominal_distr.cdf(B0 - mu_damage_AB/2) - B1_nominal_distr.cdf(mu_damage_AB/2)) - \
@@ -313,7 +317,11 @@ class TorchGame():
             mean_actual_B = torch.clamp(mean_actual_B, min=0)
             var_actual_B = torch.clamp(var_actual_B, min=0.01)
 
-        B1_actual_distr = torch.distributions.Normal(loc=mean_actual_B, scale = torch.sqrt(var_actual_B))
+        B1_actual_distr = torch.distributions.Normal(
+            loc=mean_actual_B,
+            scale = torch.sqrt(var_actual_B),
+            validate_args=False
+        )
 
         prob_B_lives = (1 - B1_nominal_distr.cdf(mu_damage_AB/2))
         # prob_B_lives_actual = 1 - B1_actual_distr.cdf(mu_damage_AB/2)
@@ -497,7 +505,7 @@ class TorchGame():
         def L(xi, omega):
             return xi * (1 - torch.exp(- torch.norm(omega, p=2))**2)
 
-        def LR_sched(it, max = 3000, div = 50, add = 0):
+        def LR_sched(it, max=400, div=50, add=0):
             return torch.tensor( max / (math.exp((it + 1)/div)) + add)
 
         z_n = torch.cat((Action[:,0], Action[:,1]), dim=0).unsqueeze(dim=-1).requires_grad_(True)
@@ -517,13 +525,13 @@ class TorchGame():
         convergence = False
         convergence_check = torch.tensor((1E-3, 1E-3, 1E-3, 1E-3))
         # gamma1 = 1E3  # learning rate
-        gamma2 = 1E4  # step size nu
+        gamma2 = 4E4  # step size nu
         xi_1 = 1e-4 * torch.tensor(1)  # regularization, pushes solution towards NE
         xi_2 = 1e-4 * torch.tensor(1)  # regularization, pushes solution towards NE
 
         iteration = 0
 
-        convergence_hist = [False, False, False]
+        convergence_hist = [False] * 5
         while (iteration < 250 and  not all(convergence_hist)):  # or torch.all(torch.norm(action_step):
             gamma1 = LR_sched(iteration)
 
@@ -543,15 +551,26 @@ class TorchGame():
 
                 }
                 jac_z = jacobian(scoringFun, z_n, **params_jacobian)
+
                 hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), **params_hessian)
+                hess_nu = hess @ nu_n
+                # plot heatmap of normalized hessian.
+                # plt.imshow((hess - torch.mean(hess)) / torch.std(hess), cmap="hot", interpolation="nearest")
+
+                #slower than calculating full hessian. Probabilty due to vectorization.
+                # TODO: vectorize jacobian caluclations and make hvp manually.
+                # _, hess_nu_hvp = hvp(scoringFun, z_n, nu_n)
+                # hess_nu = hess_nu_hvp
 
                 omega = jac_z * grad_flipper
                 L_val = L(xi_1, omega)
-                fun_nu = lambda nu: torch.norm(hess @ nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
+                fun_nu = lambda nu: torch.norm(hess_nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
                 jac_nu = jacobian(fun_nu, nu_n, **params_jacobian)
 
-                g_x = jac_z[:self.N_Technologies] + (hess @ nu_n)[:self.N_Technologies]
-                g_y = - jac_z[self.N_Technologies:] - (hess @ nu_n)[self.N_Technologies:]
+
+
+                g_x = jac_z[:self.N_Technologies] + (hess_nu)[:self.N_Technologies]
+                g_y = - jac_z[self.N_Technologies:] - (hess_nu)[self.N_Technologies:]
                 g_nu = jac_nu
 
                 # grad, omega_nu_grad = jvp(func=lambda z: ft_jacobian(scoringFun)(z), primals=(z_n, ), tangents=(nu_n * grad_flipper, ))#
@@ -610,6 +629,7 @@ class TorchGame():
                 check1 = torch.max(torch.abs(omega))
                 check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
                 print(f"it: {iteration}, max(Omega): {check1}, norm(z_step): {check2} \n")
+                print(f"norm(nu): {torch.norm(self.stack_var(nu_n), p=2, dim=0)}")
                 convergence_hist.pop(0)
                 convergence_hist.append(
                         torch.all(torch.abs(omega) < 1E-4) and \
