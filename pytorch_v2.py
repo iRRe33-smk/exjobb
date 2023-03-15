@@ -1,5 +1,7 @@
 import torch
-from torch.autograd.functional import jacobian, hessian
+from torch.autograd.functional import jacobian, hessian, hvp, vhp
+from functorch import jvp, vmap
+from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
 # import numpy as np
 import time
 import json
@@ -25,11 +27,10 @@ class PseudoDistr():
         self.scale = scale
 
     def sample(self,num):
-        return torch.tensor([self.loc]*num[0])
+        return torch.stack([self.loc]*num[0],0)
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions=3, N_actions_startpoint=3, Start_action_length=[1, 1], I=1,
-                 D=3) -> None:
+    def __init__(self, Horizon=5, N_actions=3, N_actions_startpoint=3, Start_action_length=[1, 1], I=1, D=3) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         # torch.manual_seed(1337)
@@ -42,6 +43,8 @@ class TorchGame():
         # Used in TRL calculations
         self.I = I
         self.D = D
+
+        self.StadardNormal = torch.distributions.Normal(loc=0, scale=1)
 
 
         self.FINAL_ACTIONS = []
@@ -67,8 +70,8 @@ class TorchGame():
 
         with open("config_files/xi_params.json") as f:
             params = json.load(f)
-            self.xi_params_mu = torch.tensor(params["mu"][:self.N_Technologies])
-            self.xi_params_sigma = torch.tensor(params["sigma"][:self.N_Technologies])
+            self.xi_params_mu = torch.cat((torch.tensor(params["mu"][:self.N_Technologies]), torch.tensor(params["mu"][:self.N_Technologies])), dim=0)
+            self.xi_params_sigma = torch.cat((torch.tensor(params["sigma"][:self.N_Technologies]),torch.tensor(params["sigma"][:self.N_Technologies])), dim=0)
 
 
 
@@ -113,12 +116,10 @@ class TorchGame():
 
     def Update_State(self, State, Action):
 
-        xi_1 = torch.normal(mean=self.xi_params_mu, std=self.xi_params_sigma)
-        xi_2 = torch.normal(mean=self.xi_params_mu, std=self.xi_params_sigma)
-        xi = torch.exp(torch.stack((xi_1, xi_2), dim=-1))
-        
-        # UpdateValue = self.normAction(Action) * xi
-        UpdateValue = self.normAction(Action)
+        xi = self.stack_var(torch.exp((torch.normal(mean = self.xi_params_mu, std = self.xi_params_sigma))))
+
+        UpdateValue = self.normAction(Action) * xi
+        # UpdateValue = self.normAction(Action)
         newState = torch.add(State, UpdateValue)
 
         return newState
@@ -152,12 +153,14 @@ class TorchGame():
 
         #TODO: verify parameter initiative probabiblity constant
         critval = torch.tensor(c * stdev)
+        cdf_pos_critval = dist.cdf(critval)
+        cdf_neg_critval = dist.cdf(-critval)
 
-        p1_favoured = 1 - dist.cdf(critval)
-        neither_favoured = dist.cdf(critval) - dist.cdf(-critval)
-        p2_favoured = dist.cdf(-critval)
+        p1_favoured = 1 - cdf_pos_critval
+        neither_favoured = cdf_pos_critval - cdf_neg_critval
+        p2_favoured = cdf_neg_critval
 
-        return torch.tensor([p1_favoured, neither_favoured, p2_favoured])
+        return torch.stack([p1_favoured, neither_favoured, p2_favoured], dim = 0)
 
     def ThetaToOffProb(self, theta):
         #TODO : verify Parameter offensive probability
@@ -257,6 +260,7 @@ class TorchGame():
         # B_n_distr = self.getNominalDefenders(flipTheta(theta), A_n_distr.sample(1), theta[0, 0])
 
         return weighted_results
+
     def getNominalDefenders(self, theta: torch.tensor, A0, B0):
 
         with torch.no_grad():
@@ -464,10 +468,8 @@ class TorchGame():
         # this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
 
         stat_0 = State.clone()
-        print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
-        winprob_0 = self.SalvoBattleStochasticWrapper(self.techToParams(stat_0))
-
-
+        # print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
+        # winprob_0 = self.SalvoBattleStochasticWrapper(self.techToParams(stat_0))
 
         # def normAction(self,z):
         #     act_n = self.stack_var(z)
@@ -515,45 +517,87 @@ class TorchGame():
 
         convergence = False
         convergence_check = torch.tensor((1E-3, 1E-3, 1E-3, 1E-3))
+        gamma1 = 4e-0  # learning rate
+        gamma2 = 5e-3  # learning rate
+        xi_1 = 1e-4 * torch.tensor(1)  # regularization, pushes solution towards NE
+        xi_2 = 1e-4 * torch.tensor(1)  # regularization, pushes solution towards NE
+
         iteration = 0
 
         while (iteration < 150 and  not convergence):  # or torch.all(torch.norm(action_step):
 
 
-            gamma1 = 4e-0 # learning rate
-            gamma2 = 5e-3 # learning rate
-            xi_1 = 1e-4 * torch.tensor(1) # regularization, pushes solution towards NE
-            xi_2 = 1e-4 * torch.tensor(1) # regularization, pushes solution towards NE
-
-            score_n = scoringFun(z_n)
-            score_n.backward()
-            grad = z_n.grad
-            omega = torch.detach(grad * grad_flipper)
-
-            z_n.requires_grad_(True)
-            combined_x = scoringFun(z_n) + T(omega) @ nu_n
-            combined_x.backward()
-            g_x = z_n.grad[:self.N_Technologies]
-
-            z_n.requires_grad_(True)
-            combined_y = -scoringFun(z_n) + T(omega) @ nu_n
-            combined_y.backward()
-            g_y = z_n.grad[self.N_Technologies:]
-
-            nu_n.requires_grad_(True)
-            hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze()) * hess_flipper
-            combined_nu = torch.norm(hess @ nu_n - omega, p=2) ** 2 + L(xi_1, omega) * torch.norm(nu_n, p=2) ** 2
-            combined_nu.backward()
-            g_nu = nu_n.grad
-
 
             with torch.no_grad():
+                params_jacobian = {
+                "vectorize" : True,
+                "create_graph" : False,
+                "strict" : False,
+                "strategy" : "reverse-mode"
+                }
+                params_hessian = {
+                "vectorize" : True,
+                "create_graph" : False,
+                "strict" : False,
+                "outer_jacobian_strategy" : "reverse-mode"
+
+                }
+                jac_z = jacobian(scoringFun, z_n, **params_jacobian)
+                hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), **params_hessian)
+
+                omega = jac_z * grad_flipper
+                L_val = L(xi_1, omega)
+                fun_nu = lambda nu: torch.norm(hess @ nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
+                jac_nu = jacobian(fun_nu, nu_n, **params_jacobian)
+
+                g_x = jac_z[:self.N_Technologies] + (hess @ nu_n)[:self.N_Technologies]
+                g_y = - jac_z[self.N_Technologies:] - (hess @ nu_n)[self.N_Technologies:]
+                g_nu = jac_nu
+
+                # grad, omega_nu_grad = jvp(func=lambda z: ft_jacobian(scoringFun)(z), primals=(z_n, ), tangents=(nu_n * grad_flipper, ))#
+                # omega = grad * grad_flipper
+                #
+                # g_x = (grad + omega_nu_grad)[:self.N_Technologies]
+                # g_y = (-grad + omega_nu_grad)[self.N_Technologies:]
+                #
+                # # hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), vectorize=True) * hess_flipper
+                # # hess_nu = hess @ nu_n
+                # # block = torch.zeros((self.N_Technologies*2, self.N_Technologies*2))
+                # # block[:self.N_Technologies, :self.N_Technologies] = 1.0
+                # # block[self.N_Technologies:, self.N_Technologies:] = -1.0
+                # #
+                # # nu_select = (grad_flipper  + 1) / 2
+                # # n1 = (nu_n * nu_select) #.unsqueeze(dim=0)
+                # # n2 = (nu_n * (nu_select - 1)) #.unsqueeze(dim=0)
+                # #
+                # # #NOTE : this is only possible if game is zero sum.
+                # #
+                # # fun = lambda z: scoringFun(z).unsqueeze(dim=-1).T
+                # # hn1 = block @ ft_jvp(fun, (z_n, ), (n1, ))[1]
+                # # hn2 = block @ ft_jvp(fun, (z_n, ), (n2, ))[1]
+                # # hess_nu = block @ ft_jvp(fun, (z_n, ), (n1, ))[1] - \
+                # #           block @ ft_jvp(fun, (z_n, ), (n2, ))[1]
+                #
+                # # hess_nu = hvp(lambda z : scoringFun(z).unsqueeze(), z_n, nu_n)
+                # # fun_nu = lambda nu : torch.norm(hess_nu - omega, p=2) ** 2 + L(xi_1, omega) * torch.norm(nu_n, p=2) ** 2
+                # # g_nu = ft_jacobian(fun_nu)(nu_n)
+                #
+                # # fun_x = lambda z : scoringFun(z) + T(omega) @ nu_n
+                # # g_x = ft_jacobian(fun_x)(z_n).squeeze()[:self.N_Technologies]
+                # # fun_y = lambda z : -scoringFun(z) + T(omega) @ nu_n
+                # # g_y = ft_jacobian(fun_y)(z_n).squeeze()[self.N_Technologies:]
+                #
+                # #hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), vectorize=True) * hess_flipper
+                # L_val =  L(xi_1, omega)
+                # fun_nu = lambda nu: torch.norm(hess @ nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
+                # g_nu = ft_jacobian(fun_nu)(nu_n)
+
                 z_step = torch.cat((gamma1 * g_x, -1 * gamma1 * g_y), dim=0)
-                z_n += z_step
+                z_n += z_step#.unsqueeze(dim = 1)
 
                 nu_step = gamma2 * g_nu
                 nu_n += nu_step
-            # print(g_x, g_y, g_nu)
+
 
 
             #TODO : LSS?
@@ -577,19 +621,16 @@ class TorchGame():
 
 
             iteration += 1
+            print(iteration)
             if iteration > 100:
                 omega_convergence = torch.abs(omega) < 1E-3
                 convergence = torch.all(omega_convergence)
 
             if iteration % 100 == 0:
                 
-                print(f"it: {iteration}, ||z_step||: {torch.norm(self.stack_var(z_step), p=2, dim = 0)},  ||nu||: {torch.norm(self.stack_var(nu_n), p=2, dim=0)}, winProb: {score_n}")
+                print(f"it: {iteration}, ||z_step||: {torch.norm(self.stack_var(z_step), p=2, dim = 0)},  ||nu||: {torch.norm(self.stack_var(nu_n), p=2, dim=0)}, winProb: {scoringFun(z_n)}")
                 print(f"norm action: {torch.norm(z_n[:self.N_Technologies], p =2), torch.norm(z_n[self.N_Technologies:], p =2)}")
-                print(f"score: {score_n}")
                 print("\n ")
-
-            # convergence = torch.all(torch.cat((torch.norm(self.stack_var(z_step),p=2, dim=0), torch.norm(self.stack_var(nu_n),p=2, dim=0))) <
-            #         convergence_check)
 
         print("new action\n \n ")
         final_action = z_n
