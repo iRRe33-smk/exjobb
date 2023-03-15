@@ -1,14 +1,12 @@
 import torch
-from torch.autograd.functional import jacobian, hessian, hvp, vhp
-from functorch import jvp, vmap
-from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
+from torch.autograd.functional import jacobian, hessian#, hvp, vhp
+#from functorch import jvp, vmap
+#from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
 # import numpy as np
-import time
-import json
+import time, math, json
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from sklearn.preprocessing import StandardScaler
 from matplotlib import pyplot as plt
 
 
@@ -21,9 +19,8 @@ class PseudoDistr():
         return torch.stack([self.loc]*num[0],0)
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions=10, N_actions_startpoint=30, Start_action_length=[1, 1], I=1,
-                 D=3) -> None:
-    def __init__(self, Horizon=5, N_actions=3, N_actions_startpoint=3, Start_action_length=[1, 1], I=1, D=3) -> None:
+    def __init__(self, Horizon=5, N_actions=10, N_actions_startpoint=30, Start_action_length=[1, 1], I=1, D=3, Stochastic_state_update = True) -> None:
+
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         # torch.manual_seed(1337)
@@ -33,6 +30,7 @@ class TorchGame():
         self.N_actions_startpoint = N_actions_startpoint
         self.N_actions = N_actions
         self.Players_action_length = torch.tensor(Start_action_length)
+        self.Stochastic_state_update = Stochastic_state_update
         # Used in TRL calculations
         self.I = I
         self.D = D
@@ -107,8 +105,11 @@ class TorchGame():
 
     def Update_State(self, State, Action):
 
-        xi = self.stack_var(torch.exp((torch.normal(mean = self.xi_params_mu, std = self.xi_params_sigma))))
-
+        with torch.no_grad():
+            if self.Stochastic_state_update:
+                xi= self.stack_var(torch.exp((torch.normal(mean = self.xi_params_mu, std = self.xi_params_sigma))))
+            else:
+                xi = 1.0
         UpdateValue = self.normAction(Action) * xi
         # UpdateValue = self.normAction(Action)
         newState = torch.add(State, UpdateValue)
@@ -496,6 +497,9 @@ class TorchGame():
         def L(xi, omega):
             return xi * (1 - torch.exp(- torch.norm(omega, p=2))**2)
 
+        def LR_sched(it, max = 3000, div = 50, add = 0):
+            return torch.tensor( max / (math.exp((it + 1)/div)) + add)
+
         z_n = torch.cat((Action[:,0], Action[:,1]), dim=0).unsqueeze(dim=-1).requires_grad_(True)
         nu_n = 0.05 * torch.ones((self.N_Technologies * 2, 1))
 
@@ -512,15 +516,16 @@ class TorchGame():
 
         convergence = False
         convergence_check = torch.tensor((1E-3, 1E-3, 1E-3, 1E-3))
-        gamma1 = 4e-0  # learning rate
-        gamma2 = 5e-3  # learning rate
+        # gamma1 = 1E3  # learning rate
+        gamma2 = 1E4  # step size nu
         xi_1 = 1e-4 * torch.tensor(1)  # regularization, pushes solution towards NE
         xi_2 = 1e-4 * torch.tensor(1)  # regularization, pushes solution towards NE
 
         iteration = 0
 
-        while (iteration < 150 and  not convergence):  # or torch.all(torch.norm(action_step):
-
+        convergence_hist = [False, False, False]
+        while (iteration < 250 and  not all(convergence_hist)):  # or torch.all(torch.norm(action_step):
+            gamma1 = LR_sched(iteration)
 
 
             with torch.no_grad():
@@ -595,6 +600,24 @@ class TorchGame():
 
 
 
+
+                stat_n = self.Update_State(stat_0, z_n)
+                assert ~torch.any(torch.isnan(stat_n))
+
+                theta_n = self.techToParams(stat_n)
+                assert ~torch.any(torch.isnan(theta_n))
+
+                check1 = torch.max(torch.abs(omega))
+                check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
+                print(f"it: {iteration}, max(Omega): {check1}, norm(z_step): {check2} \n")
+                convergence_hist.pop(0)
+                convergence_hist.append(
+                        torch.all(torch.abs(omega) < 1E-4) and \
+                        torch.all(torch.norm(self.stack_var(z_step), p=2, dim=0) < 1E-2)
+                )
+
+                iteration += 1
+
             #TODO : LSS?
 
             # with torch.no_grad():
@@ -615,18 +638,8 @@ class TorchGame():
             #     nu_n -= nu_step
 
 
-            iteration += 1
-            print(iteration)
-            if iteration > 100:
-                omega_convergence = torch.abs(omega) < 1E-3
-                convergence = torch.all(omega_convergence)
 
-            if iteration % 100 == 0:
-                
-                print(f"it: {iteration}, ||z_step||: {torch.norm(self.stack_var(z_step), p=2, dim = 0)},  ||nu||: {torch.norm(self.stack_var(nu_n), p=2, dim=0)}, winProb: {scoringFun(z_n)}")
-                print(f"norm action: {torch.norm(z_n[:self.N_Technologies], p =2), torch.norm(z_n[self.N_Technologies:], p =2)}")
-                print("\n ")
-
+        print(f"stopped searching after {iteration} iterations.")
         print("new action\n \n ")
         final_action = z_n
         # print(Action)
@@ -724,7 +737,7 @@ class TorchGame():
 
         print(f"Number of actions taken after filtration: {n_acts}")
 
-        return  acts
+        return acts
 
     def GetActions(self, State):
 
@@ -767,7 +780,7 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=3, N_actions=3, I=5, D=2)
+    FullGame = TorchGame(Horizon=2, N_actions=3, I=5, D=2, Stochastic_state_update=False)
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Run()
