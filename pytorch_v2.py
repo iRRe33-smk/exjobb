@@ -10,6 +10,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 from matplotlib import pyplot as plt
+from classes.history import History
 
 
 class PseudoDistr():
@@ -21,8 +22,6 @@ class PseudoDistr():
         return torch.stack([self.loc]*num[0],0)
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions=10, N_actions_startpoint=30, Start_action_length=[1, 1], I=1,
-                 D=3) -> None:
     def __init__(self, Horizon=5, N_actions=3, N_actions_startpoint=3, Start_action_length=[1, 1], I=1, D=3) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -743,26 +742,24 @@ class TorchGame():
             NashEquilibria.append(NE_action)
 
         return self.FilterActions(NashEquilibria)
-
+    
     def Run(self):
-        start = time.time()
-        self.Q.append((self.InitialState, 0))
-
         node_id = 0
-        while (len(self.Q) > 0):# and time.time() - start < 10):
-
-            st, t = self.Q.pop()  # the state which we are currently examining
-            # print(t)
-            act = self.GetActions(st)  # small number of nash equilibria
+        self.Q.append((self.InitialState, 0, node_id))
+        self.History.add_data(node_id, None, 0, self.InitialState, None, 0)
+        
+        while (len(self.Q) > 0): 
+            st, t, parent_node_id = self.Q.pop() #the state which we are currently examining
+            act = self.GetActions(st) # small number of nash equilibria
+            print("Q: ", len(self.Q))
+            print("History: ", len(self.History.HistoryList))
             for a in act:
-                self.History.append((st, a)) # adding the entering state and the exiting action to history, reward should probably also be added.
-                # self.History.add_datapoint(st,a,nåt_anat)
-
-                # the resulting states of traversing along the nash equilibrium
-                st_new = self.Update_State(st, a)
-                if t + 1 < self.Horizon:
-                    self.Q.append((st_new, t + 1))
-                    node_id += 1
+                st_new = self.Update_State(st,a) #the resulting states of traversing along the nash equilibrium
+                node_id += 1
+                self.History.add_data(node_id, parent_node_id, t+1, st_new, a, 0)
+    
+                if t+1 < self.Horizon:
+                    self.Q.append((st_new,t+1, node_id)) 
         return self.History
 
 
