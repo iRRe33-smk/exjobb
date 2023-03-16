@@ -12,7 +12,6 @@ from matplotlib import pyplot as plt
 from classes.history import History
 
 
-
 class PseudoDistr():
     def __init__(self, loc = 0, scale = 0 ):
         self.loc = loc
