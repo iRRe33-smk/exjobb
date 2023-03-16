@@ -5,8 +5,9 @@ from matplotlib import pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
-
-
+import pandas as pd
+import os, time
+from datetime import datetime
 
 class History():
 
@@ -64,6 +65,38 @@ class History():
                 self.HistoryTree.create_node("S" + str(hist['Node_id']) + ": win_prob=" + str(hist['Reward']), hist['Node_id'], parent=hist['Parent_id'])
 
         return self.HistoryTree.show()
+
+        labels = nx.get_node_attributes(self.HistoryGraph, "label")
+        options = {
+            "node_size": 200,
+            "alpha": 0.5,
+            "node_color": "blue",
+            "labels": labels,
+            "font_size": 8,
+        }
+        pos = nx.spring_layout(self.HistoryGraph)
+        #pos = nx.multipartite_layout(self.HistoryGraph, subset_key="layer", scale=10)
+        nx.draw_networkx(self.HistoryGraph, pos, **options)
+        plt.show()
+        #plt.draw(self.HistoryGraph)
+
+        return
+
+    def save_to_file(self, name = "history_data.parquet", timestamp = True):
+        print(os.listdir())
+        if timestamp:
+            dt = datetime.now().strftime("%Y:%m:%d-%H:%M")
+        else:
+            dt = ""
+
+        filename = os.path.join("saved_runs", dt + name)
+        df_hist = pd.DataFrame.from_records(self.HistoryList)
+        print(df_hist)
+        df_hist.to_parquet(path=filename)
+        # with open(filename, "w+") as f:
+        #     df.to_p
+
+
         
     
     def __repr__(self) -> str:
