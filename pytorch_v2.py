@@ -100,8 +100,8 @@ class TorchGame():
 
     def normAction(self, z):
         act_n = self.stack_var(z)
-        lim = 75.0
-        barrier = (torch.log(lim - act_n) - torch.log(torch.tensor([lim])))
+        lim = 75
+        barrier = 1 * (torch.log(lim - act_n) - torch.log(torch.tensor([lim])))
         exp_act = torch.exp(act_n) + barrier
         act_norm = exp_act * self.Players_action_length / torch.sum(exp_act, dim=0)
         return act_norm
@@ -114,8 +114,11 @@ class TorchGame():
             else:
                 xi = 1.0
         UpdateValue = self.normAction(Action) * xi
+        assert ~torch.any(torch.isnan(UpdateValue))
         # UpdateValue = self.normAction(Action)
+
         newState = torch.add(State, UpdateValue)
+        assert ~torch.any(torch.isnan(newState))
 
         return newState
 
@@ -129,9 +132,10 @@ class TorchGame():
     def techToParams(self, State):
 
         trl = self.TechnologyReadiness(State)
-        
-        theta = (1 + torch.matmul(self.PARAMCONVERSIONMATRIX * .1, trl))  * self.baseLine_params
+        assert ~torch.any(torch.isnan(trl))
 
+        theta = (1 + torch.matmul(self.PARAMCONVERSIONMATRIX * .1, trl))  * self.baseLine_params
+        assert ~torch.any(torch.isnan(theta))
 
         return theta
 
@@ -199,7 +203,7 @@ class TorchGame():
         weighted_results = 0
         initiativeProbabilities = self.InitiativeProbabilities(theta[1, 0], theta[1, 1])
 
-        numSamples = 10
+        numSamples = 1
         depth = 1
 
         # A init
@@ -464,13 +468,12 @@ class TorchGame():
         # returnVal = p1_WinProb * torch.tensor([1,1/p1_WinProb -1],requires_grad=True)
         return p1_WinProb
 
-    def OptimizeAction(self, State, Action, max_len=torch.tensor([1, 1])):
+    def OptimizeAction(self, State, Action):
 
         # this is really the only place where the whole pytorch thing is required. The rest can be base python or numpy
 
         stat_0 = State.clone()
-        #print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
-        winprob_0 = self.SalvoBattleStochasticWrapper(self.techToParams(stat_0))
+
 
 
         # print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
@@ -488,17 +491,19 @@ class TorchGame():
 
             # act_norm = normAction(z)
             # assert ~torch.any(torch.isnan(act_norm))
+            num_reps = 16
+            score = 0
+            for i in range(num_reps):
+                stat_n = self.Update_State(stat_0, z)
+                assert ~torch.any(torch.isnan(stat_n))
 
-            stat_n = self.Update_State(stat_0, z)
-            assert ~torch.any(torch.isnan(stat_n))
+                theta_n = self.techToParams(stat_n)
+                assert ~torch.any(torch.isnan(theta_n))
 
-            theta_n = self.techToParams(stat_n)
-            assert ~torch.any(torch.isnan(theta_n))
+                score += self.SalvoBattleIterative(theta_n)
+            score /= num_reps
 
-            win_prob = self.SalvoBattleIterative(theta_n)
-
-
-            return win_prob
+            return score
 
         def T(X):
             return torch.transpose(X, 0, -1)
@@ -506,7 +511,7 @@ class TorchGame():
         def L(xi, omega):
             return xi * (1 - torch.exp(- torch.norm(omega, p=2))**2)
 
-        def LR_sched(it, max=400, div=50, add=0):
+        def LR_sched(it, max=5000, div=50, add=0):
             return torch.tensor( max / (math.exp((it + 1)/div)) + add)
 
         z_n = torch.cat((Action[:,0], Action[:,1]), dim=0).unsqueeze(dim=-1).requires_grad_(True)
@@ -534,135 +539,141 @@ class TorchGame():
 
         convergence_hist = [False] * 5
         while (iteration < 250 and  not all(convergence_hist)):  # or torch.all(torch.norm(action_step):
-            gamma1 = LR_sched(iteration)
+            try:
+                gamma1 = LR_sched(iteration)
 
 
-            with torch.no_grad():
-                params_jacobian = {
-                "vectorize" : True,
-                "create_graph" : False,
-                "strict" : False,
-                "strategy" : "reverse-mode"
-                }
-                params_hessian = {
-                "vectorize" : True,
-                "create_graph" : False,
-                "strict" : False,
-                "outer_jacobian_strategy" : "reverse-mode"
+                with torch.no_grad():
+                    params_jacobian = {
+                    "vectorize" : True,
+                    "create_graph" : False,
+                    "strict" : False,
+                    "strategy" : "reverse-mode"
+                    }
+                    params_hessian = {
+                    "vectorize" : True,
+                    "create_graph" : False,
+                    "strict" : False,
+                    "outer_jacobian_strategy" : "reverse-mode"
 
-                }
-                jac_z = jacobian(scoringFun, z_n, **params_jacobian)
+                    }
+                    jac_z = jacobian(scoringFun, z_n, **params_jacobian)
 
-                hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), **params_hessian)
-                hess_nu = hess @ nu_n
-                # plot heatmap of normalized hessian.
-                # plt.imshow((hess - torch.mean(hess)) / torch.std(hess), cmap="hot", interpolation="nearest")
+                    hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), **params_hessian)
+                    hess_nu = hess @ nu_n
 
-                #slower than calculating full hessian. Probabilty due to vectorization.
-                # TODO: vectorize jacobian caluclations and make hvp manually.
-                # _, hess_nu_hvp = hvp(scoringFun, z_n, nu_n)
-                # hess_nu = hess_nu_hvp
+                    #plot heatmap of normalized hessian.
+                    # plt.imshow((hess - torch.mean(hess)) / torch.std(hess), cmap="hot", interpolation="nearest")
+                    # plt.show()
 
-                omega = jac_z * grad_flipper
-                L_val = L(xi_1, omega)
-                fun_nu = lambda nu: torch.norm(hess_nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
-                jac_nu = jacobian(fun_nu, nu_n, **params_jacobian)
+                    #slower than calculating full hessian. Probabilty due to vectorization.
+                    # TODO: vectorize jacobian caluclations and make hvp manually.
+                    # _, hess_nu_hvp = hvp(scoringFun, z_n, nu_n)
+                    # hess_nu = hess_nu_hvp
 
-
-
-                g_x = jac_z[:self.N_Technologies] + (hess_nu)[:self.N_Technologies]
-                g_y = - jac_z[self.N_Technologies:] - (hess_nu)[self.N_Technologies:]
-                g_nu = jac_nu
-
-                # grad, omega_nu_grad = jvp(func=lambda z: ft_jacobian(scoringFun)(z), primals=(z_n, ), tangents=(nu_n * grad_flipper, ))#
-                # omega = grad * grad_flipper
-                #
-                # g_x = (grad + omega_nu_grad)[:self.N_Technologies]
-                # g_y = (-grad + omega_nu_grad)[self.N_Technologies:]
-                #
-                # # hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), vectorize=True) * hess_flipper
-                # # hess_nu = hess @ nu_n
-                # # block = torch.zeros((self.N_Technologies*2, self.N_Technologies*2))
-                # # block[:self.N_Technologies, :self.N_Technologies] = 1.0
-                # # block[self.N_Technologies:, self.N_Technologies:] = -1.0
-                # #
-                # # nu_select = (grad_flipper  + 1) / 2
-                # # n1 = (nu_n * nu_select) #.unsqueeze(dim=0)
-                # # n2 = (nu_n * (nu_select - 1)) #.unsqueeze(dim=0)
-                # #
-                # # #NOTE : this is only possible if game is zero sum.
-                # #
-                # # fun = lambda z: scoringFun(z).unsqueeze(dim=-1).T
-                # # hn1 = block @ ft_jvp(fun, (z_n, ), (n1, ))[1]
-                # # hn2 = block @ ft_jvp(fun, (z_n, ), (n2, ))[1]
-                # # hess_nu = block @ ft_jvp(fun, (z_n, ), (n1, ))[1] - \
-                # #           block @ ft_jvp(fun, (z_n, ), (n2, ))[1]
-                #
-                # # hess_nu = hvp(lambda z : scoringFun(z).unsqueeze(), z_n, nu_n)
-                # # fun_nu = lambda nu : torch.norm(hess_nu - omega, p=2) ** 2 + L(xi_1, omega) * torch.norm(nu_n, p=2) ** 2
-                # # g_nu = ft_jacobian(fun_nu)(nu_n)
-                #
-                # # fun_x = lambda z : scoringFun(z) + T(omega) @ nu_n
-                # # g_x = ft_jacobian(fun_x)(z_n).squeeze()[:self.N_Technologies]
-                # # fun_y = lambda z : -scoringFun(z) + T(omega) @ nu_n
-                # # g_y = ft_jacobian(fun_y)(z_n).squeeze()[self.N_Technologies:]
-                #
-                # #hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), vectorize=True) * hess_flipper
-                # L_val =  L(xi_1, omega)
-                # fun_nu = lambda nu: torch.norm(hess @ nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
-                # g_nu = ft_jacobian(fun_nu)(nu_n)
-
-                z_step = torch.cat((gamma1 * g_x, gamma1 * g_y), dim=0)
-                z_n += z_step#.unsqueeze(dim = 1)
-
-                nu_step = gamma2 * g_nu
-                nu_n += nu_step
+                    omega = jac_z * grad_flipper
+                    L_val = L(xi_1, omega)
+                    fun_nu = lambda nu: torch.norm(hess_nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
+                    jac_nu = jacobian(fun_nu, nu_n, **params_jacobian)
 
 
 
+                    g_x = jac_z[:self.N_Technologies] + (hess_nu)[:self.N_Technologies]
+                    g_y = - jac_z[self.N_Technologies:] - (hess_nu)[self.N_Technologies:]
+                    g_nu = jac_nu
 
-                stat_n = self.Update_State(stat_0, z_n)
-                assert ~torch.any(torch.isnan(stat_n))
+                    # grad, omega_nu_grad = jvp(func=lambda z: ft_jacobian(scoringFun)(z), primals=(z_n, ), tangents=(nu_n * grad_flipper, ))#
+                    # omega = grad * grad_flipper
+                    #
+                    # g_x = (grad + omega_nu_grad)[:self.N_Technologies]
+                    # g_y = (-grad + omega_nu_grad)[self.N_Technologies:]
+                    #
+                    # # hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), vectorize=True) * hess_flipper
+                    # # hess_nu = hess @ nu_n
+                    # # block = torch.zeros((self.N_Technologies*2, self.N_Technologies*2))
+                    # # block[:self.N_Technologies, :self.N_Technologies] = 1.0
+                    # # block[self.N_Technologies:, self.N_Technologies:] = -1.0
+                    # #
+                    # # nu_select = (grad_flipper  + 1) / 2
+                    # # n1 = (nu_n * nu_select) #.unsqueeze(dim=0)
+                    # # n2 = (nu_n * (nu_select - 1)) #.unsqueeze(dim=0)
+                    # #
+                    # # #NOTE : this is only possible if game is zero sum.
+                    # #
+                    # # fun = lambda z: scoringFun(z).unsqueeze(dim=-1).T
+                    # # hn1 = block @ ft_jvp(fun, (z_n, ), (n1, ))[1]
+                    # # hn2 = block @ ft_jvp(fun, (z_n, ), (n2, ))[1]
+                    # # hess_nu = block @ ft_jvp(fun, (z_n, ), (n1, ))[1] - \
+                    # #           block @ ft_jvp(fun, (z_n, ), (n2, ))[1]
+                    #
+                    # # hess_nu = hvp(lambda z : scoringFun(z).unsqueeze(), z_n, nu_n)
+                    # # fun_nu = lambda nu : torch.norm(hess_nu - omega, p=2) ** 2 + L(xi_1, omega) * torch.norm(nu_n, p=2) ** 2
+                    # # g_nu = ft_jacobian(fun_nu)(nu_n)
+                    #
+                    # # fun_x = lambda z : scoringFun(z) + T(omega) @ nu_n
+                    # # g_x = ft_jacobian(fun_x)(z_n).squeeze()[:self.N_Technologies]
+                    # # fun_y = lambda z : -scoringFun(z) + T(omega) @ nu_n
+                    # # g_y = ft_jacobian(fun_y)(z_n).squeeze()[self.N_Technologies:]
+                    #
+                    # #hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), vectorize=True) * hess_flipper
+                    # L_val =  L(xi_1, omega)
+                    # fun_nu = lambda nu: torch.norm(hess @ nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
+                    # g_nu = ft_jacobian(fun_nu)(nu_n)
 
-                theta_n = self.techToParams(stat_n)
-                assert ~torch.any(torch.isnan(theta_n))
+                    z_step = torch.cat((gamma1 * g_x, gamma1 * g_y), dim=0)
+                    z_step = torch.clamp(z_step, min=-5, max=10)
+                    z_n += z_step#.unsqueeze(dim = 1)
 
-                check1 = torch.max(torch.abs(omega))
-                check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
-                print(f"it: {iteration}, max(Omega): {check1}, norm(z_step): {check2} \n")
-                print(f"norm(nu): {torch.norm(self.stack_var(nu_n), p=2, dim=0)}")
-                convergence_hist.pop(0)
-                convergence_hist.append(
-                        torch.all(torch.abs(omega) < 1E-4) and \
-                        torch.all(torch.norm(self.stack_var(z_step), p=2, dim=0) < 1E-2)
-                )
-
-                iteration += 1
-
-            #TODO : LSS?
-
-            # with torch.no_grad():
-            #     omega = grad * grad_flipper
-            #     # jac = (grad * grad_flipper) # jacobian of the same point. only sign difference
-            #     hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze()) * hess_flipper
-            #     #jac = jacobian(lambda z: scoringFun(z).grad, z_n)
-            #     assert ~torch.any(torch.isnan(hess)), z_n
-            #
-            #     hTv = T(hess) @ nu_n
-            #
-            #     z_step = gamma1 * (omega + torch.exp(-xi_2 * torch.norm(hTv, p=2)) * hTv)
-            #
-            #     nu_step = gamma2 * (T(hess) @ hess @ nu_n) + L(xi_1, omega) * nu_n - T(hess) @ omega
-            #
-            #     z_n += z_step
-            #     z_n.requires_grad_(True)
-            #     nu_n -= nu_step
+                    nu_step = gamma2 * g_nu
+                    nu_n += nu_step
 
 
 
-        print(f"stopped searching after {iteration} iterations.")
-        print("new action\n \n ")
-        final_action = z_n
+
+                    stat_n = self.Update_State(stat_0, z_n)
+                    #assert ~torch.any(torch.isnan(stat_n))
+
+                    theta_n = self.techToParams(stat_n)
+                    #assert ~torch.any(torch.isnan(theta_n))
+
+                    check1 = torch.max(torch.abs(omega))
+                    check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
+                    print(f"it: {iteration}, max(Omega): {check1}, norm(z_step): {check2} \n")
+                    print(f"norm(nu): {torch.norm(self.stack_var(nu_n), p=2, dim=0)}")
+                    convergence_hist.pop(0)
+                    convergence_hist.append(
+                            check1 < 1E-4 and torch.all(check2 < 1E-2)
+                    )
+
+                    iteration += 1
+
+                    #TODO : LSS?
+
+                    # with torch.no_grad():
+                    #     omega = grad * grad_flipper
+                    #     # jac = (grad * grad_flipper) # jacobian of the same point. only sign difference
+                    #     hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze()) * hess_flipper
+                    #     #jac = jacobian(lambda z: scoringFun(z).grad, z_n)
+                    #     assert ~torch.any(torch.isnan(hess)), z_n
+                    #
+                    #     hTv = T(hess) @ nu_n
+                    #
+                    #     z_step = gamma1 * (omega + torch.exp(-xi_2 * torch.norm(hTv, p=2)) * hTv)
+                    #
+                    #     nu_step = gamma2 * (T(hess) @ hess @ nu_n) + L(xi_1, omega) * nu_n - T(hess) @ omega
+                    #
+                    #     z_n += z_step
+                    #     z_n.requires_grad_(True)
+                    #     nu_n -= nu_step
+
+
+
+                print(f"stopped searching after {iteration} iterations.")
+                print("new action\n \n ")
+                final_action = z_n.detach()
+            except AssertionError as msg:
+                print(msg)
+                final_action = None
         # print(Action)
         # print(final_action)
         return final_action
@@ -773,7 +784,7 @@ class TorchGame():
         for i in range(self.N_actions_startpoint):
             init_action = ActionStartPoints[:, :, i]
             NE_action = self.OptimizeAction(
-                State, init_action, self.Players_action_length)
+                State, init_action)
             NashEquilibria.append(NE_action)
 
         return self.FilterActions(NashEquilibria)
@@ -781,7 +792,7 @@ class TorchGame():
     def Run(self):
         node_id = 0
         self.Q.append((self.InitialState, 0, node_id))
-        self.History.add_data(node_id, None, 0, self.InitialState, None, 0)
+        self.History.add_data(node_id, None, 0, self.InitialState.numpy(), None, 0)
 
         while (len(self.Q) > 0):
             st, t, parent_node_id = self.Q.pop() #the state which we are currently examining
@@ -791,7 +802,7 @@ class TorchGame():
             for a in act:
                 st_new = self.Update_State(st,a) #the resulting states of traversing along the nash equilibrium
                 node_id += 1
-                self.History.add_data(node_id, parent_node_id, t+1, st_new, a, 0)
+                self.History.add_data(node_id, parent_node_id, t+1, st_new.numpy(), a.numpy(), 0)
 
                 if t+1 < self.Horizon:
                     self.Q.append((st_new,t+1, node_id))
@@ -799,9 +810,13 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=2, N_actions=3, I=5, D=2, Stochastic_state_update=False)
+    FullGame = TorchGame(Horizon=1, N_actions=5, N_actions_startpoint=5, I=5, D=2, Stochastic_state_update=False, Start_action_length=[2, 2])
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Run()
+    hist.save_to_file("test.parquet")
     #print(hist)
     print(len(hist))
+
+
+

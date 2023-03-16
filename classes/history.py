@@ -1,6 +1,9 @@
+import pandas as pd
 from treelib import Node, Tree
 import networkx as nx
 from matplotlib import pyplot as plt
+import os, time
+from datetime import datetime
 
 class History():
 
@@ -57,7 +60,23 @@ class History():
         plt.show()
         #plt.draw(self.HistoryGraph)
 
-        return 
+        return
+
+    def save_to_file(self, name = "history_data.parquet", timestamp = True):
+        print(os.listdir())
+        if timestamp:
+            dt = datetime.now().strftime("%Y:%m:%d-%H:%M")
+        else:
+            dt = ""
+
+        filename = os.path.join("saved_runs", dt + name)
+        df_hist = pd.DataFrame.from_records(self.HistoryList)
+        print(df_hist)
+        df_hist.to_parquet(path=filename)
+        # with open(filename, "w+") as f:
+        #     df.to_p
+
+
         
     
     def __repr__(self) -> str:
