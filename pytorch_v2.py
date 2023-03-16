@@ -536,8 +536,9 @@ class TorchGame():
         iteration = 0
 
         convergence_hist = [False] * 5
-        while (iteration < 250 and  not all(convergence_hist)):  # or torch.all(torch.norm(action_step):
-            try:
+        try:
+            while (iteration < 250 and  not all(convergence_hist)):  # or torch.all(torch.norm(action_step):
+
                 gamma1 = LR_sched(iteration)
 
 
@@ -666,12 +667,12 @@ class TorchGame():
 
 
 
-                print(f"stopped searching after {iteration} iterations.")
-                print("new action\n \n ")
-                final_action = z_n.detach()
-            except AssertionError as msg:
-                print(msg)
-                final_action = None
+            print(f"stopped searching after {iteration} iterations.")
+            print("new action\n \n ")
+            final_action = z_n.detach()
+        except AssertionError as msg:
+            print(msg)
+            final_action = None
         # print(Action)
         # print(final_action)
         return final_action
@@ -815,7 +816,7 @@ if __name__ == "__main__":
     hist.analyse_cluster(Horizon=3)
     hist.save_to_file("test.parquet")
     #print(hist)
-    print(len(hist))
+    # print(len(hist))
 
 
 

@@ -8,6 +8,7 @@ from sklearn.preprocessing import StandardScaler
 import pandas as pd
 import os, time
 from datetime import datetime
+import pickle
 
 class History():
 
@@ -82,17 +83,17 @@ class History():
 
         return
 
-    def save_to_file(self, name = "history_data.parquet", timestamp = True):
+    def save_to_file(self, name = "history_data.pkl", timestamp = True):
         print(os.listdir())
         if timestamp:
-            dt = datetime.now().strftime("%Y:%m:%d-%H:%M")
+            dt = datetime.now().strftime("%Y.%m.%d_%H.%M")
         else:
             dt = ""
 
         filename = os.path.join("saved_runs", dt + name)
         df_hist = pd.DataFrame.from_records(self.HistoryList)
         print(df_hist)
-        df_hist.to_parquet(path=filename)
+        df_hist.to_pickle(path=filename)
         # with open(filename, "w+") as f:
         #     df.to_p
 
