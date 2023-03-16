@@ -22,7 +22,7 @@ class PseudoDistr():
         return torch.stack([self.loc]*num[0],0)
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions=3, N_actions_startpoint=3, Start_action_length=[1, 1], I=1, D=3) -> None:
+    def __init__(self, Horizon=4, N_actions=3, N_actions_startpoint=4, Start_action_length=[1, 1], I=1, D=3) -> None:
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         # torch.manual_seed(1337)
@@ -459,7 +459,7 @@ class TorchGame():
 
         stat_0 = State.clone()
         #print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
-        winprob_0 = self.SalvoBattleStochasticWrapper(self.techToParams(stat_0))
+        #winprob_0 = self.SalvoBattleStochasticWrapper(self.techToParams(stat_0))
 
 
         # print(self.SalvoBattleStochasticWrapper(self.baseLine_params))
@@ -518,7 +518,7 @@ class TorchGame():
 
         iteration = 0
 
-        while (iteration < 150 and  not convergence):  # or torch.all(torch.norm(action_step):
+        while (iteration < 10 and  not convergence):  # or torch.all(torch.norm(action_step):
 
 
 
@@ -615,8 +615,7 @@ class TorchGame():
 
 
             iteration += 1
-            print(iteration)
-            if iteration > 100:
+            if iteration > 10:
                 omega_convergence = torch.abs(omega) < 1E-3
                 convergence = torch.all(omega_convergence)
 
@@ -768,5 +767,4 @@ if __name__ == "__main__":
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Run()
-    #print(hist)
-    print(len(hist))
+    hist.analyse_cluster(Horizon=3)
