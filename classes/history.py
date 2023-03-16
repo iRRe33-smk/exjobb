@@ -99,7 +99,6 @@ class History():
         df_hist = pd.DataFrame.from_records(self.HistoryList)
         print(df_hist)
         df_hist.to_pickle(path=filename)
-
         # with open(filename, "w+") as f:
         #     df.to_p
 
