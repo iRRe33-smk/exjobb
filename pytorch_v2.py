@@ -7,8 +7,9 @@ import time, math, json
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import StandardScaler
 from matplotlib import pyplot as plt
-# plt.ion()
+from classes.history import History
 
 
 class PseudoDistr():
@@ -38,7 +39,7 @@ class TorchGame():
 
 
         self.FINAL_ACTIONS = []
-        self.History = []
+        self.History = History()
         self.Q = []
 
 
@@ -778,24 +779,22 @@ class TorchGame():
         return self.FilterActions(NashEquilibria)
 
     def Run(self):
-        start = time.time()
-        self.Q.append((self.InitialState, 0))
-
         node_id = 0
-        while (len(self.Q) > 0):# and time.time() - start < 10):
+        self.Q.append((self.InitialState, 0, node_id))
+        self.History.add_data(node_id, None, 0, self.InitialState, None, 0)
 
-            st, t = self.Q.pop()  # the state which we are currently examining
-            # print(t)
-            act = self.GetActions(st)  # small number of nash equilibria
+        while (len(self.Q) > 0):
+            st, t, parent_node_id = self.Q.pop() #the state which we are currently examining
+            act = self.GetActions(st) # small number of nash equilibria
+            print("Q: ", len(self.Q))
+            print("History: ", len(self.History.HistoryList))
             for a in act:
-                self.History.append((st, a)) # adding the entering state and the exiting action to history, reward should probably also be added.
-                # self.History.add_datapoint(st,a,nåt_anat)
+                st_new = self.Update_State(st,a) #the resulting states of traversing along the nash equilibrium
+                node_id += 1
+                self.History.add_data(node_id, parent_node_id, t+1, st_new, a, 0)
 
-                # the resulting states of traversing along the nash equilibrium
-                st_new = self.Update_State(st, a)
-                if t + 1 < self.Horizon:
-                    self.Q.append((st_new, t + 1))
-                    node_id += 1
+                if t+1 < self.Horizon:
+                    self.Q.append((st_new,t+1, node_id))
         return self.History
 
 
