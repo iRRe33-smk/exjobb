@@ -9,6 +9,11 @@ import pandas as pd
 import os, time
 from datetime import datetime
 import pickle
+import torch
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import StandardScaler
+
 
 class History():
 
