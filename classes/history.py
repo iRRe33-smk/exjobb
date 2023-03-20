@@ -66,7 +66,7 @@ class History():
     def save_to_file(self, name = "history_data.pkl", timestamp = True):
         print(os.listdir())
         if timestamp:
-            dt = datetime.now().strftime("%Y.%m.%d_%H.%M")
+            dt = "--" + datetime.now().strftime("%Y.%m.%d_%H.%M")
         else:
             dt = ""
 

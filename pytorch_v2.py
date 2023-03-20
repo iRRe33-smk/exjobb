@@ -811,7 +811,7 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=1, N_actions=5, N_actions_startpoint=5, I=5, D=2, Stochastic_state_update=False, Start_action_length=[2, 2])
+    FullGame = TorchGame(Horizon=5, N_actions=3, N_actions_startpoint=100, I=5, D=2, Stochastic_state_update=True, Start_action_length=[2, 2])
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Run()
