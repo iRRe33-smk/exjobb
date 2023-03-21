@@ -23,7 +23,8 @@ class PseudoDistr():
         return torch.stack([self.loc]*num[0],0)
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions_chosen=10, N_actions_startpoint=30, Start_action_length=[1, 1], I=1, D=3, Stochastic_state_update = True) -> None:
+    def __init__(self, Horizon=5, N_actions_chosen=10, N_actions_startpoint=30,
+                 Start_action_length=[1, 1], I=1, D=3, Stochastic_state_update = True, Max_optim_iter = 50) -> None:
 
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -35,6 +36,7 @@ class TorchGame():
         self.N_actions_chosen = N_actions_chosen
         self.Players_action_length = torch.tensor(Start_action_length)
         self.Stochastic_state_update = Stochastic_state_update
+        self.Max_optim_iter = Max_optim_iter
         # Used in TRL calculations
         self.I = I
         self.D = D
@@ -541,7 +543,7 @@ class TorchGame():
 
         convergence_hist = [False] * 5
         try:
-            while (iteration < 50 and  not all(convergence_hist)):  # or torch.all(torch.norm(action_step):
+            while (iteration < self.Max_optim_iter and  not all(convergence_hist)):  # or torch.all(torch.norm(action_step):
 
                 gamma1 = LR_sched(iteration)
 
@@ -682,12 +684,10 @@ class TorchGame():
         return final_action
 
     # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
-    def FilterActions(self, Actions):
-        def PCA(Actions, q=3):
-            a_mat = torch.cat((Actions), dim=1) #ska denna transponeras HJÄLP
-            a_mat = torch.transpose(a_mat, 0, -1)
+    def FilterActions(self, Actions, q=10):
+        def PCA(Actions):
+            a_mat = torch.cat((Actions), dim=1).T
             m, n = a_mat.size()
-            # q = 3
             (U, S, V) = torch.pca_lowrank(a_mat, q=min(q,m,n))
             return (U, S, V)
 
@@ -766,7 +766,7 @@ class TorchGame():
 
             return kmeans.cluster_centers_, k
 
-        U, S, V = PCA(Actions)
+        U, S, V = PCA(Actions, q)
         centers, n_acts = k_means(U)
         centers = torch.tensor(centers)
         actions = torch.matmul(V, torch.transpose(centers, dim0=0, dim1=-1))
@@ -829,7 +829,7 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=5, N_actions_chosen=4, N_actions_startpoint=50, I=5, D=2, Stochastic_state_update=True, Start_action_length=[2, 2])
+    FullGame = TorchGame(Horizon=2, N_actions_chosen=5, N_actions_startpoint=10, I=5, D=2, Stochastic_state_update=False, Start_action_length=[2, 2])
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Run()
