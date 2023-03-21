@@ -22,7 +22,7 @@ class PseudoDistr():
         return torch.stack([self.loc]*num[0],0)
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions_chosen=10, N_actions_startpoint=30,
+    def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
                  Start_action_length=[1, 1], I=1, D=3, Stochastic_state_update = True, Max_optim_iter = 50) -> None:
 
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -32,7 +32,7 @@ class TorchGame():
         #self.N_Technologies = N_Technologies
         self.Horizon = Horizon
         self.N_actions_startpoint = N_actions_startpoint
-        self.N_actions_chosen = N_actions_chosen
+        self.Max_actions_chosen = Max_actions_chosen
         self.Players_action_length = torch.tensor(Start_action_length)
         self.Stochastic_state_update = Stochastic_state_update
         self.Max_optim_iter = Max_optim_iter
@@ -682,11 +682,11 @@ class TorchGame():
         return final_action
 
     # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
-    def FilterActions(self, Actions, q=10):
-        def PCA(Actions):
-            a_mat = torch.cat((Actions), dim=1).T
+    def FilterActions(self, Actions, q=4):
+
+        def PCA(a_mat, q):
             m, n = a_mat.size()
-            (U, S, V) = torch.pca_lowrank(a_mat, q=min(q,m,n))
+            (U, S, V) = torch.pca_lowrank(a_mat, q=min(q, m, n))
             return (U, S, V)
 
         def k_means_elbow(dataset):
@@ -712,9 +712,14 @@ class TorchGame():
             optimal_k = 5
             return optimal_k
 
-        def k_means_siluette_analysis(dataset, plot):
-            # max_clusters = max(self.N_actions_chosen,)
-            range_n_clusters = range(2,self.N_actions_chosen+1)
+        def k_means_silhouette_analysis(dataset, plot):
+            # max_clusters = max(self.Max_actions_chosen,)
+
+            if plot:
+                range_n_clusters = range(2, dataset.shape[1])
+            else:
+                range_n_clusters = range(2, self.Max_actions_chosen + 1)
+
             silhouette_avg = []
             for num_clusters in range_n_clusters:
 
@@ -732,30 +737,32 @@ class TorchGame():
                 # silhouette score
                 silhouette_avg.append(silhouette_score(dataset, cluster_labels))
             if plot:
-                plt.plot(range_n_clusters,silhouette_avg,'bx-')
+                plt.plot(range_n_clusters, silhouette_avg, 'bx-')
+                plt.vlines(x=self.Max_actions_chosen,
+                           ymin=min(silhouette_avg) / 1.2, ymax=max(silhouette_avg) * 1.2,
+                           colors="r")
                 plt.xlabel('Values of K')
                 plt.ylabel('Silhouette score')
                 plt.title('Silhouette analysis For Optimal k')
                 plt.show()
 
-            # c = self.N_actions_chosen # To control the maximum number of clusters the algorithm chooses, change this parameter
-            # replaced by maxNumAct = self.N_actions_chosen
+            # c = self.Max_actions_chosen # To control the maximum number of clusters the algorithm chooses, change this parameter
+            # replaced by maxNumAct = self.Max_actions_chosen
 
             max_score = max(silhouette_avg)
-            optimal_k = silhouette_avg.index(max_score)
-
+            optimal_k = silhouette_avg.index(max_score) + 2
+            print(f"silhouette scores: {[0, 0]+silhouette_avg}")
             return optimal_k
 
-        def k_means(U):
+        def k_means(U, plot_silhouette=False):
             u = U.detach().numpy()
-            # Choose optimal number of clusters with siluette analysis
-            k = k_means_siluette_analysis(u, plot=False)
+            # Choose optimal number of clusters with silhouette analysis
+            k = k_means_silhouette_analysis(u, plot=plot_silhouette)
             #k = k_means_elbow(u)
 
             kmeans = KMeans(
                 init="random",
-                n_clusters=max(k, 2
-                               ),
+                n_clusters=max(k, 2),
                 n_init=100,
                 max_iter=500,
                 random_state=1337
@@ -764,14 +771,18 @@ class TorchGame():
 
             return kmeans.cluster_centers_, k
 
-        U, S, V = PCA(Actions, q)
-        centers, n_acts = k_means(U)
-        centers = torch.tensor(centers)
-        actions = torch.matmul(V, torch.transpose(centers, dim0=0, dim1=-1))
-        acts = []
-        for a in range(1,n_acts+1):
-            acts.append(actions[:,a-1:a])
 
+        filtered = list(filter(lambda a: ~torch.any(torch.isnan(a)), Actions))
+
+        A = torch.cat((filtered), dim=1).T # number of converged actions x 2*numTechs
+        U, S, V = PCA(A, q)
+        pc_projection = A @ V
+        centers, n_acts = k_means(pc_projection, plot_silhouette=False)
+        centers = torch.tensor(centers)
+        actions = (centers @ V.T).T #torch.matmul(U @ centers, torch.transpose(centers, dim0=0, dim1=-1))
+        acts = []
+        for a in range(n_acts):
+            acts.append(actions[:, a])
         print(f"Number of actions taken after filtration: {n_acts}")
 
         return acts
@@ -796,7 +807,7 @@ class TorchGame():
         return self.FilterActions(NashEquilibria)
     
     def Run(self):
-        maxactions = sum([self.N_actions_chosen ** h for h in range(self.Horizon)])
+        maxactions = sum([self.Max_actions_chosen ** h for h in range(self.Horizon)])
 
         node_id = 0
         self.Q.append((self.InitialState, 0, node_id))
@@ -808,8 +819,8 @@ class TorchGame():
             st, t, parent_node_id = self.Q.pop() #the state which we are currently examining
             act = self.GetActions(st) # small number of nash equilibria
 
-            diff = self.N_actions_chosen - len(act)
-            closed = diff * sum([self.N_actions_chosen ** h for h in range(self.Horizon - t - 1)])
+            diff = self.Max_actions_chosen - len(act)
+            closed = diff * sum([self.Max_actions_chosen ** h for h in range(self.Horizon - t - 1)])
             pbar.update(len(act) + closed)
 
 
@@ -826,7 +837,8 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=2, N_actions_chosen=5, N_actions_startpoint=10, I=5, D=2, Stochastic_state_update=False, Start_action_length=[2, 2])
+    FullGame = TorchGame(Horizon=5, Max_actions_chosen=5, N_actions_startpoint=50, I=5, D=2,
+                         Stochastic_state_update=False, Start_action_length=[2, 2], Max_optim_iter=100)
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Run()
