@@ -3,12 +3,14 @@ from torch.autograd.functional import jacobian, hessian, hvp, vhp
 #from functorch import jvp, vmap
 #from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
 # import numpy as np
+from tqdm import tqdm
 import time, math, json
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from matplotlib import pyplot as plt
 from classes.history import History
+
 
 
 class PseudoDistr():
@@ -20,7 +22,7 @@ class PseudoDistr():
         return torch.stack([self.loc]*num[0],0)
 
 class TorchGame():
-    def __init__(self, Horizon=5, N_actions=10, N_actions_startpoint=30, Start_action_length=[1, 1], I=1, D=3, Stochastic_state_update = True) -> None:
+    def __init__(self, Horizon=5, N_actions_chosen=10, N_actions_startpoint=30, Start_action_length=[1, 1], I=1, D=3, Stochastic_state_update = True) -> None:
 
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -29,7 +31,7 @@ class TorchGame():
         #self.N_Technologies = N_Technologies
         self.Horizon = Horizon
         self.N_actions_startpoint = N_actions_startpoint
-        self.N_actions = N_actions
+        self.N_actions_chosen = N_actions_chosen
         self.Players_action_length = torch.tensor(Start_action_length)
         self.Stochastic_state_update = Stochastic_state_update
         # Used in TRL calculations
@@ -530,14 +532,14 @@ class TorchGame():
         convergence_check = torch.tensor((1E-3, 1E-3, 1E-3, 1E-3))
         # gamma1 = 1E3  # learning rate
         gamma2 = 4E4  # step size nu
-        xi_1 = 1e-4 * torch.tensor(1)  # regularization, pushes solution towards NE
-        xi_2 = 1e-4 * torch.tensor(1)  # regularization, pushes solution towards NE
+        xi_1 = 100 * torch.tensor(1)  # regularization, pushes solution towards NE
+        # xi_2 = 1e-4 * torch.tensor(1)  # regularization, pushes solution towards NE
 
         iteration = 0
 
         convergence_hist = [False] * 5
         try:
-            while (iteration < 250 and  not all(convergence_hist)):  # or torch.all(torch.norm(action_step):
+            while (iteration < 50 and  not all(convergence_hist)):  # or torch.all(torch.norm(action_step):
 
                 gamma1 = LR_sched(iteration)
 
@@ -545,7 +547,7 @@ class TorchGame():
                 with torch.no_grad():
                     params_jacobian = {
                     "vectorize" : True,
-                    "create_graph" : False,
+                    "create_graph" : True,
                     "strict" : False,
                     "strategy" : "reverse-mode"
                     }
@@ -637,8 +639,8 @@ class TorchGame():
 
                     check1 = torch.max(torch.abs(omega))
                     check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
-                    print(f"it: {iteration}, max(Omega): {check1}, norm(z_step): {check2} \n")
-                    print(f"norm(nu): {torch.norm(self.stack_var(nu_n), p=2, dim=0)}")
+                    # print(f"it: {iteration}, max(Omega): {check1}, norm(z_step): {check2} \n")
+                    # print(f"norm(nu): {torch.norm(self.stack_var(nu_n), p=2, dim=0)}")
                     convergence_hist.pop(0)
                     convergence_hist.append(
                             check1 < 1E-4 and torch.all(check2 < 1E-2)
@@ -667,8 +669,8 @@ class TorchGame():
 
 
 
-            print(f"stopped searching after {iteration} iterations.")
-            print("new action\n \n ")
+            # print(f"stopped searching after {iteration} iterations.")
+            # print("new action\n \n ")
             final_action = z_n.detach()
         except AssertionError as msg:
             print(msg)
@@ -679,11 +681,11 @@ class TorchGame():
 
     # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
     def FilterActions(self, Actions):
-        def PCA(Actions):
+        def PCA(Actions, q=3):
             a_mat = torch.cat((Actions), dim=1) #ska denna transponeras HJÄLP
             a_mat = torch.transpose(a_mat, 0, -1)
             m, n = a_mat.size()
-            q = 3
+            # q = 3
             (U, S, V) = torch.pca_lowrank(a_mat, q=min(q,m,n))
             return (U, S, V)
 
@@ -711,7 +713,8 @@ class TorchGame():
             return optimal_k
 
         def k_means_siluette_analysis(dataset, plot):
-            range_n_clusters = range(2,self.N_actions_startpoint)
+            # max_clusters = max(self.N_actions_chosen,)
+            range_n_clusters = range(2,self.N_actions_chosen+1)
             silhouette_avg = []
             for num_clusters in range_n_clusters:
 
@@ -719,9 +722,9 @@ class TorchGame():
                 kmeans = KMeans(
                     init= "random",
                     n_clusters=num_clusters,
-                    n_init=10,
-                    max_iter=300,
-                    random_state=42
+                    n_init=50,
+                    max_iter=500,
+                    random_state=1337
                 )
                 kmeans.fit(dataset)
                 cluster_labels = kmeans.labels_
@@ -735,9 +738,11 @@ class TorchGame():
                 plt.title('Silhouette analysis For Optimal k')
                 plt.show()
 
-            c = 7 # To control the maximum number of clusters the algorithm chooses, change this parameter
-            max_score = max(silhouette_avg[0:c])
-            optimal_k = silhouette_avg.index(max_score)+2
+            # c = self.N_actions_chosen # To control the maximum number of clusters the algorithm chooses, change this parameter
+            # replaced by maxNumAct = self.N_actions_chosen
+
+            max_score = max(silhouette_avg)
+            optimal_k = silhouette_avg.index(max_score)
 
             return optimal_k
 
@@ -748,11 +753,12 @@ class TorchGame():
             #k = k_means_elbow(u)
 
             kmeans = KMeans(
-                init= "random",
-                n_clusters=k,
-                n_init=10,
-                max_iter=300,
-                random_state=42
+                init="random",
+                n_clusters=max(k, 2
+                               ),
+                n_init=100,
+                max_iter=500,
+                random_state=1337
             )
             kmeans.fit(u)
 
@@ -780,7 +786,8 @@ class TorchGame():
         ActionStartPoints = torch.stack((P1_points, P2_points), dim=1)
 
         NashEquilibria = []
-        for i in range(self.N_actions_startpoint):
+
+        for i in tqdm(range(self.N_actions_startpoint), desc = f"optimizing actions from {self.N_actions_startpoint} random startingPoints", position = 1, leave=True ):
             init_action = ActionStartPoints[:, :, i]
             NE_action = self.OptimizeAction(
                 State, init_action)
@@ -789,13 +796,23 @@ class TorchGame():
         return self.FilterActions(NashEquilibria)
     
     def Run(self):
+        maxactions = sum([self.N_actions_chosen ** h for h in range(self.Horizon)])
+
         node_id = 0
         self.Q.append((self.InitialState, 0, node_id))
         self.History.add_data(node_id, None, 0, self.InitialState.numpy(), None, 0)
 
+        pbar = tqdm(desc = "number of states evaluated", total = maxactions, position= 0, leave= True)
+
         while (len(self.Q) > 0):
             st, t, parent_node_id = self.Q.pop() #the state which we are currently examining
             act = self.GetActions(st) # small number of nash equilibria
+
+            diff = self.N_actions_chosen - len(act)
+            closed = diff * sum([self.N_actions_chosen ** h for h in range(self.Horizon - t - 1)])
+            pbar.update(len(act) + closed)
+
+
             print("Q: ", len(self.Q))
             print("History: ", len(self.History.HistoryList))
             for a in act:
@@ -809,7 +826,7 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=5, N_actions=3, N_actions_startpoint=100, I=5, D=2, Stochastic_state_update=True, Start_action_length=[2, 2])
+    FullGame = TorchGame(Horizon=5, N_actions_chosen=4, N_actions_startpoint=50, I=5, D=2, Stochastic_state_update=True, Start_action_length=[2, 2])
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Run()
