@@ -504,7 +504,8 @@ class TorchGame():
                 theta_n = self.techToParams(stat_n)
                 assert ~torch.any(torch.isnan(theta_n))
 
-                score += self.SalvoBattleIterative(theta_n)
+                score += self.Battle(theta_n)
+                # score += self.SalvoBattleIterative(theta_n)
             score /= num_reps
 
             return score
@@ -684,7 +685,7 @@ class TorchGame():
         return final_action
 
     # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
-    def FilterActions(self, Actions, q=4):
+    def FilterActions(self, Actions, q=8):
 
         def PCA(a_mat, q):
             m, n = a_mat.size()
@@ -738,6 +739,12 @@ class TorchGame():
 
                 # silhouette score
                 silhouette_avg.append(silhouette_score(dataset, cluster_labels))
+
+            max_score = max(silhouette_avg[:self.Max_actions_chosen - 2 + 1]) # -2 to compensate fort starting at 2, add 1 to get inclusive
+            optimal_k = silhouette_avg.index(max_score) + 2
+            print(f"silhouette scores: {[0, 0] + silhouette_avg}")
+
+
             if plot:
                 plt.plot(range_n_clusters, silhouette_avg, 'bx-')
                 plt.vlines(x=self.Max_actions_chosen,
@@ -748,12 +755,6 @@ class TorchGame():
                 plt.title('Silhouette analysis For Optimal k')
                 plt.show()
 
-            # c = self.Max_actions_chosen # To control the maximum number of clusters the algorithm chooses, change this parameter
-            # replaced by maxNumAct = self.Max_actions_chosen
-
-            max_score = max(silhouette_avg)
-            optimal_k = silhouette_avg.index(max_score) + 2
-            print(f"silhouette scores: {[0, 0]+silhouette_avg}")
             return optimal_k
 
         def k_means(U, plot_silhouette=False):
@@ -800,7 +801,8 @@ class TorchGame():
 
         NashEquilibria = []
 
-        for i in tqdm(range(self.N_actions_startpoint), desc = f"optimizing actions from {self.N_actions_startpoint} random startingPoints", position = 1, leave=True ):
+        for i in tqdm(range(self.N_actions_startpoint), desc=f"optimizing actions from {self.N_actions_startpoint} random  startingPoints", position=1, leave=True):
+
             init_action = ActionStartPoints[:, :, i]
             NE_action = self.OptimizeAction(
                 State, init_action)
