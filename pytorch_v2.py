@@ -24,7 +24,7 @@ class PseudoDistr():
 
 class TorchGame():
     def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
-                 Start_action_length=[1, 1], I=1, D=3, Stochastic_state_update = True, Max_optim_iter = 50) -> None:
+                 Start_action_length=[10, 10], I=1, D=3, Stochastic_state_update = True, Max_optim_iter = 50) -> None:
 
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -105,7 +105,7 @@ class TorchGame():
     def normAction(self, z):
         act_n = self.stack_var(z)
         lim = 75
-        barrier = 1 * (torch.log(lim - act_n) - torch.log(torch.tensor([lim])))
+        barrier = 1 * (torch.log(lim - act_n) - 1 * torch.log(torch.tensor([lim])))
         exp_act = torch.exp(act_n) + barrier
         act_norm = exp_act * self.Players_action_length / torch.sum(exp_act, dim=0)
         return act_norm
@@ -138,7 +138,7 @@ class TorchGame():
         trl = self.TechnologyReadiness(State)
         assert ~torch.any(torch.isnan(trl))
 
-        theta = (1 + torch.matmul(self.PARAMCONVERSIONMATRIX * .1, trl))  * self.baseLine_params
+        theta = (1 + torch.matmul(self.PARAMCONVERSIONMATRIX * .4, trl))  * self.baseLine_params
         assert ~torch.any(torch.isnan(theta))
 
         return theta
@@ -208,7 +208,7 @@ class TorchGame():
         initiativeProbabilities = self.InitiativeProbabilities(theta[1, 0], theta[1, 1])
 
         numSamples = 1
-        depth = 1
+        depth = 2
 
         # A init
         cumProb = 0
@@ -495,7 +495,7 @@ class TorchGame():
 
             # act_norm = normAction(z)
             # assert ~torch.any(torch.isnan(act_norm))
-            num_reps = 16
+            num_reps = 8
             score = 0
             for i in range(num_reps):
                 stat_n = self.Update_State(stat_0, z)
@@ -507,7 +507,7 @@ class TorchGame():
                 score += self.Battle(theta_n)
                 # score += self.SalvoBattleIterative(theta_n)
             score /= num_reps
-
+            #print(score)
             return score
 
         def T(X):
@@ -842,12 +842,13 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=5, Max_actions_chosen=5, N_actions_startpoint=50, I=5, D=2,
-                         Stochastic_state_update=False, Start_action_length=[2, 2], Max_optim_iter=100)
+    FullGame = TorchGame(Horizon=6, Max_actions_chosen=5, N_actions_startpoint=100, I=5, D=2,
+                         Stochastic_state_update=True, Start_action_length=[10, 10], Max_optim_iter=150)
 
     # print(FullGame.techToParams(FullGame.InitialState))
     hist = FullGame.Run()
     hist.save_to_file("FullRun.pkl")
+    # hist.send_email(test=False)
 
 
 

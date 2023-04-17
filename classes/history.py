@@ -4,6 +4,10 @@ import networkx as nx
 from matplotlib import pyplot as plt
 import os, time
 from datetime import datetime
+
+import smtplib
+from email.mime.text import MIMEText
+
 import pickle
 
 class History():
@@ -12,6 +16,7 @@ class History():
         self.HistoryList = []
         self.HistoryTree = Tree()
         self.HistoryGraph = nx.Graph()
+        self.SavedToFile = "NOT-SAVED"
     
     def add_data(self, Node_id, Parent_id, Time, State, Action, Reward):
         history_dict = {
@@ -70,15 +75,38 @@ class History():
         else:
             dt = ""
 
-        filename = os.path.join("saved_runs", dt + name)
+        filename = os.path.join("saved_runs", name + dt)
         df_hist = pd.DataFrame.from_records(self.HistoryList)
         print(df_hist)
         df_hist.to_pickle(path=filename)
+        self.SavedToFile = filename
 
         # with open(filename, "w+") as f:
         #     df.to_p
 
+    def send_email(self, test = True, sender = "datorspelmail@gmail.com",  recipients : [str] = ["isabe723@student.liu.se", "lukpe879@student.liu.se"]):
+        if test:
+            msg = MIMEText("test emial from python.")#"""Test email from python. Exjobb 2023 """)
+            msg['Subject'] = "test-message"
 
+            rec = recipients[0]
+
+
+        else:
+            try:
+                msg = MIMEText(f"Run has complted at GMT:{datetime.now()} \n number of states data points in history: {len(self.HistoryList)} \n Results saved at {self.SavedToFile}")
+            except Exception as e:
+                msg = MIMEText("could not build results. Program finished.")
+            msg['Subject'] = "Run completed"
+            rec = recipients
+
+        with open("passwordfile.txt" ,"r") as f:
+            password = f.readline().strip()
+
+        smtp_server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        smtp_server.login(sender, password)
+        smtp_server.sendmail(sender, rec, msg.as_string())
+        smtp_server.quit()
         
     
     def __repr__(self) -> str:
@@ -87,3 +115,8 @@ class History():
 
 
     #def PCA(self):
+
+
+if __name__ == "__main__":
+    hist = History()
+    hist.send_email()
