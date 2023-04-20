@@ -4,7 +4,7 @@ from torch.autograd.functional import jacobian, hessian, hvp, vhp
 #from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
 # import numpy as np
 from tqdm import tqdm
-import time, math, json, multiprocessing as mp
+import time, math, json, os, multiprocessing as mp
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -28,7 +28,9 @@ class PseudoDistr():
 
 class TorchGame():
     def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
-                 Start_action_length=[10, 10], I=1, D=3, omega = .1, Stochastic_state_update = True, Max_optim_iter = 50, Filter_actions = True, base_params = "paper") -> None:
+                 Start_action_length=[10, 10], I=1, D=3, omega = .1, Stochastic_state_update = True,
+                 Max_optim_iter = 50, Filter_actions = True, base_params = "paper",
+                 NumRepsBattle = 8) -> None:
 
         self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
         
@@ -41,10 +43,14 @@ class TorchGame():
         self.Players_action_length = torch.tensor(Start_action_length)
         self.Stochastic_state_update = Stochastic_state_update
         self.Max_optim_iter = Max_optim_iter
+        self.NumRepsBattle = NumRepsBattle
+        
         # Used in TRL calculations
         self.I = I
         self.D = D
+        
         self.omega = omega
+        
         self.filter_actions = Filter_actions
 
         self.FINAL_ACTIONS = []
@@ -265,7 +271,7 @@ class TorchGame():
         prob = p_A_lives
         results[2] = prob
         
-        weighted_results = results.T @ initiativeProbabilities
+        weighted_results = torch.sum(results * initiativeProbabilities)
         return weighted_results
 
     def getActualDefenders(self, theta: torch.tensor, A0, B0):
@@ -468,8 +474,10 @@ class TorchGame():
         # returnVal = p1_WinProb * torch.tensor([1,1/p1_WinProb -1],requires_grad=True)
         return p1_WinProb
 
+    def OptimizeActionMP(self, kwargs):
+        return self.OptimizeAction(**kwargs)
+        
     def OptimizeAction(self, State, Action, num_reps = 8):
-
         stat_0 = State.clone()
         
         # theta_0 = self.techToParams(stat_0)
@@ -591,7 +599,7 @@ class TorchGame():
                         
                     iteration += 1
 
-            if True:
+            if False:
                 fig, ax1 = plt.subplots()
                 # fig.title("norms")
                 ax1.plot(range(iteration), grad_norms, color="red", label="grad norms")
@@ -723,6 +731,22 @@ class TorchGame():
 
         return acts
 
+    def GetActionsMP(self, State):
+        
+        pool = mp.pool.Pool(os.cpu_count())
+
+        
+        ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint])
+        optim_params = [{"State" : State, "Action": ActionStartPoints[:,:,i], "num_reps" : self.NumRepsBattle} for i in range(self.N_actions_startpoint)]
+        chunksize = int(self.N_actions_startpoint / os.cpu_count()) 
+        NashEquilibria = pool.map_async(self.OptimizeActionMP, optim_params, chunksize = chunksize).get(3000)
+        
+        if self.filter_actions:
+            return self.FilterActions(NashEquilibria)
+        else:
+            return NashEquilibria[:self.Max_actions_chosen]
+
+    
     def GetActions(self, State):
         # P1_points = self._randomPointsInCube()
         # P2_points = self._randomPointsInCube()
@@ -732,7 +756,7 @@ class TorchGame():
         #     rad=self.Players_action_length[1]), 0, -1)
         # ActionStartPoints = torch.stack((P1_points, P2_points), dim=1)
 
-        ActionStartPoints = torch.rand(size=[14, 2, 100])
+        ActionStartPoints = torch.rand(size=[14, 2, self.N_actions_startpoint])
         NashEquilibria = []
         for i in tqdm(range(self.N_actions_startpoint), desc=f"optimizing actions from {self.N_actions_startpoint} random  startingPoints", position=1, leave=True):
 
@@ -756,8 +780,11 @@ class TorchGame():
 
         while (len(self.Q) > 0):
             st, t, parent_node_id = self.Q.pop() #the state which we are currently examining
-            act = self.GetActions(st) # small number of nash equilibria
-
+            if self.N_actions_startpoint > os.cpu_count() * 3:
+                act = self.GetActionsMP(st) # small number of nash equilibria
+            else:
+                act = self.GetActions(st
+                                      )
             diff = self.Max_actions_chosen - len(act)
             closed = diff * sum([self.Max_actions_chosen ** h for h in range(self.Horizon - t - 1)])
             pbar.update(len(act) + closed)
@@ -777,13 +804,13 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    FullGame = TorchGame(Horizon=5, Max_actions_chosen=6, N_actions_startpoint=10, I=.5, D=5,
-                         Start_action_length=[5, 5], Max_optim_iter=100, Filter_actions=True,
-                         Stochastic_state_update=True, base_params="custom")
+    # FullGame = TorchGame(Horizon=5, Max_actions_chosen=6, N_actions_startpoint=96, I=.5, D=5,
+    #                      Start_action_length=[5, 5], Max_optim_iter=250, Filter_actions=True,
+    #                      Stochastic_state_update=True, base_params="custom", NumRepsBattle = 8)
     
+    FullGame = TorchGame(Horizon=2, Max_actions_chosen=3, N_actions_startpoint=50, I=.5, D=5,
+                         Start_action_length=[5, 5], Max_optim_iter=7, Filter_actions=True,
+                         Stochastic_state_update=True, base_params="paper", NumRepsBattle = 2)
     hist = FullGame.Run()
     hist.save_to_file("FullRun.pkl")
-    # hist.send_email(test=False)
-
-
-
+    hist.send_email(test=True)

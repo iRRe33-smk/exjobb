@@ -52,21 +52,21 @@ class History():
 
         return self.HistoryTree.show()
 
-        labels = nx.get_node_attributes(self.HistoryGraph, "label")
-        options = {
-            "node_size": 200,
-            "alpha": 0.5,
-            "node_color": "blue",
-            "labels": labels,
-            "font_size": 8,
-        }
-        pos = nx.spring_layout(self.HistoryGraph)
-        #pos = nx.multipartite_layout(self.HistoryGraph, subset_key="layer", scale=10)
-        nx.draw_networkx(self.HistoryGraph, pos, **options)
-        plt.show()
-        #plt.draw(self.HistoryGraph)
+        # labels = nx.get_node_attributes(self.HistoryGraph, "label")
+        # options = {
+        #     "node_size": 200,
+        #     "alpha": 0.5,
+        #     "node_color": "blue",
+        #     "labels": labels,
+        #     "font_size": 8,
+        # }
+        # pos = nx.spring_layout(self.HistoryGraph)
+        # #pos = nx.multipartite_layout(self.HistoryGraph, subset_key="layer", scale=10)
+        # nx.draw_networkx(self.HistoryGraph, pos, **options)
+        # plt.show()
+        # #plt.draw(self.HistoryGraph)
 
-        return
+        # return
 
     def save_to_file(self, name = "history_data.pkl", timestamp = True):
         print(os.listdir())
@@ -84,7 +84,7 @@ class History():
         # with open(filename, "w+") as f:
         #     df.to_p
 
-    def send_email(self, test = True, sender = "datorspelmail@gmail.com",  recipients : [str] = ["isabe723@student.liu.se", "lukpe879@student.liu.se"]):
+    def send_email(self, test = True, sender = "datorspelmail@gmail.com",  recipients = ["isabe723@student.liu.se", "lukpe879@student.liu.se"]):
         if test:
             msg = MIMEText("test emial from python.")#"""Test email from python. Exjobb 2023 """)
             msg['Subject'] = "test-message"
@@ -119,4 +119,4 @@ class History():
 
 if __name__ == "__main__":
     hist = History()
-    hist.send_email()
+    hist.send_email(test=False)
