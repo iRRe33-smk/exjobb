@@ -2,9 +2,9 @@ import torch
 from torch.autograd.functional import jacobian, hessian, hvp, vhp
 #from functorch import jvp, vmap
 #from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
-# import numpy as np
+import numpy as np
 from tqdm import tqdm
-import time, math, json, os, multiprocessing as mp
+import time, math, json, os, multiprocessing as mp, random, string
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -28,7 +28,7 @@ class PseudoDistr():
 
 class TorchGame():
     def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
-                 Start_action_length=[10, 10], I=1, D=3, omega = .1, Stochastic_state_update = True,
+                 Players_action_length=[10, 10], I=1, D=3, omega = .1, Stochastic_state_update = True,
                  Max_optim_iter = 50, Filter_actions = True, base_params = "paper",
                  NumRepsBattle = 8) -> None:
 
@@ -40,7 +40,7 @@ class TorchGame():
         self.Horizon = Horizon
         self.N_actions_startpoint = N_actions_startpoint
         self.Max_actions_chosen = Max_actions_chosen
-        self.Players_action_length = torch.tensor(Start_action_length)
+        self.Players_action_length = torch.tensor(Players_action_length)
         self.Stochastic_state_update = Stochastic_state_update
         self.Max_optim_iter = Max_optim_iter
         self.NumRepsBattle = NumRepsBattle
@@ -55,6 +55,7 @@ class TorchGame():
 
         self.FINAL_ACTIONS = []
         self.History = History()
+        self.dirPath = self.History.make_dir()
         self.Q = []
 
 
@@ -79,14 +80,26 @@ class TorchGame():
 
 
         self.N_Capabilities,  self.N_Technologies = self.PARAMCONVERSIONMATRIX.size()
-        # with open("citation_analysis/distribution_params.json") as f:
-            
+        with open("citation_analysis/distribution_params.json") as f:
+            dat = json.load(f)
+            mu = [dat[k]["mu"] for k in dat.keys()] * 2
+            sigma = [dat[k]["sigma"] for k in dat.keys()] * 2
+            self.xi_params_mu = torch.tensor(mu)
+            self.xi_params_sigma = torch.tensor(sigma)
 
-        with open("config_files/xi_params.json") as f:
-            params = json.load(f)
-            self.xi_params_mu = torch.cat((torch.tensor(params["mu"][:self.N_Technologies]), torch.tensor(params["mu"][:self.N_Technologies])), dim=0)
-            self.xi_params_sigma = torch.cat((torch.tensor(params["sigma"][:self.N_Technologies]),torch.tensor(params["sigma"][:self.N_Technologies])), dim=0)
+            # print(mu, "\n", sigma)
 
+        # with open("config_files/xi_params.json") as f:
+        #     params = json.load(f)
+        #     self.xi_params_mu = torch.cat((torch.tensor(params["mu"][:self.N_Technologies]), torch.tensor(params["mu"][:self.N_Technologies])), dim=0)
+        #     self.xi_params_sigma = torch.cat((torch.tensor(params["sigma"][:self.N_Technologies]),torch.tensor(params["sigma"][:self.N_Technologies])), dim=0)
+        #
+    
+    def make_random_str(self, length = 16):
+        letters = string.ascii_lowercase
+        str = ''.join([random.choice(letters) for _ in range(length)]) 
+        return str
+    
     def assign_baseline_theta(self):
         naive_theta_0 = self.omega * self.PARAMCONVERSIONMATRIX @ self.TechnologyReadiness(self.InitialState)
         self.baseLine_params = self.baseLine_params_paper - naive_theta_0 
@@ -134,7 +147,7 @@ class TorchGame():
         # lim = 75
         # barrier = 15 * (torch.log(lim - act_n) - 5 * torch.log(torch.tensor([lim])))
         exp_act = torch.exp(act_n)# + barrier
-        act_norm = exp_act * self.Players_action_length / torch.sum(exp_act, dim=0)
+        act_norm = self.Players_action_length * exp_act / torch.sum(exp_act, dim=0)
         return act_norm
 
     def Update_State(self, State, Action):
@@ -166,12 +179,8 @@ class TorchGame():
 
         trl = self.TechnologyReadiness(State)
         assert ~torch.any(torch.isnan(trl))
-        # print(trl)
         
-        # theta = (1 + torch.matmul(self.PARAMCONVERSIONMATRIX * omega, trl))  * self.baseLine_params
-        
-        theta = self.omega * torch.matmul(self.PARAMCONVERSIONMATRIX, trl) + self.baseLine_params
-        
+        theta = self.omega * (self.PARAMCONVERSIONMATRIX @ trl) + self.baseLine_params
         assert ~torch.any(torch.isnan(theta))
         # print(theta)
         return theta
@@ -257,7 +266,7 @@ class TorchGame():
         B_sample = B_n_distr.sample()
         A_sample = A_n_distr.sample()
         A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta),  B_sample, A_sample)
-        B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_sample,  B_sample)
+        # B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_sample,  B_sample)
         prob = p_A_lives
         results[1] = prob
        
@@ -266,8 +275,8 @@ class TorchGame():
         B_n_distr = PseudoDistr(theta[0,1])
        
         B_sample = B_n_distr.sample()
-        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta),  B_sample, A_n_distr.sample([1]))                
-        B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_n_distr.sample([1]), B_sample)
+        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta),  B_sample, A_n_distr.sample())
+        # B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_n_distr.sample(), B_sample)
         prob = p_A_lives
         results[2] = prob
         
@@ -278,7 +287,7 @@ class TorchGame():
         
         if (A0 < 0  or B0 <0):
             #  B1_actual_distr, prob_B_lives, False
-            return torch.distributions.Normal(0.0,0.01), 0,True
+            return torch.distributions.Normal(0.0,0.01), 0.0, True
 
         A_offNum = theta[2, 0]
         A_offProb = self.ThetaToOffProb(theta[3, 0])
@@ -586,33 +595,47 @@ class TorchGame():
                     
                     winprob_n = sum([scoringFun(z_n) for _ in range(num_reps)])/num_reps
                     winprobs.append(winprob_n)
-
-                    
-                    if False and (iteration % 10 == 0 or iteration < 5):
-                        fig, axes = plt.subplots(ncols=2)
-                        plt.title(f"iteration: {iteration}, prob = {winprob_n}")
-                        ax1, ax2 = axes
-                        im1 = ax1.imshow((hess - torch.mean(hess)) / torch.std(hess), cmap="hot", interpolation="nearest", label="hessian")
-                        im2 = ax2.imshow((jac_z-torch.mean(jac_z)) / torch.std(jac_z), cmap="hot", interpolation="nearest", label="gradient")
-                        plt.show()
-                        
-                        
                     iteration += 1
-
-            if False:
-                fig, ax1 = plt.subplots()
-                # fig.title("norms")
-                ax1.plot(range(iteration), grad_norms, color="red", label="grad norms")
-                ax1.legend()
-                ax2 = ax1.twinx()
-                ax3 = ax1.twinx()
-                ax2.plot(range(iteration), step_norms, color="blue", label="step norms")
-                ax2.legend()
-                ax3.plot(range(iteration), winprobs, color="green", label="winprob")
-                ax3.legend()
-                plt.show()
-
+                    
+                    # if False and (iteration % 10 == 0 or iteration < 5):
+                    # if iteration in [0,10]  and np.random.rand() < 0.005:
+                    #     fig, axes = plt.subplots(ncols=2)
+                    #     plt.title(f"iteration: {iteration}, prob = {winprob_n}")
+                    #     ax1, ax2 = axes
+                    #     im1 = ax1.imshow((hess - torch.mean(hess)) / torch.std(hess), cmap="hot", interpolation="nearest", label="hessian")
+                    #     im2 = ax2.imshow((jac_z-torch.mean(jac_z)) / torch.std(jac_z), cmap="hot", interpolation="nearest", label="gradient")
+                        
+                    #     name = f"Hessian:{iteration}_{self.make_random_str(16)}"
+                    #     fig.savefig(os.path.join(self.dirPath, name) +".pdf", format = "pdf")                        
+                        
+                   
             final_action = z_n.detach()
+            
+            # if np.random.rand() < 0.01:
+            #     #converged hessian
+            #     fig, axes = plt.subplots(ncols=2)
+            #     plt.title(f"iteration: {iteration}, prob = {winprob_n}, after convergence")
+            #     ax1, ax2 = axes
+            #     im1 = ax1.imshow((hess - torch.mean(hess)) / torch.std(hess), cmap="hot", interpolation="nearest", label="hessian")
+            #     im2 = ax2.imshow((jac_z-torch.mean(jac_z)) / torch.std(jac_z), cmap="hot", interpolation="nearest", label="gradient")
+            #     name = f"Hessian_conv:{iteration}_{self.make_random_str(16)}"
+            #     fig.savefig(os.path.join(self.dirPath, name) +".pdf", format = "pdf")      
+                
+            #     #training trajectory
+            #     fig, ax1 = plt.subplots()
+            #     # fig.title("norms")
+            #     ax1.plot(range(iteration), grad_norms, color="red", label="grad norms")
+            #     ax1.legend()
+            #     ax2 = ax1.twinx()
+            #     ax3 = ax1.twinx()
+            #     ax2.plot(range(iteration), step_norms, color="blue", label="step norms")
+            #     ax2.legend()
+            #     ax3.plot(range(iteration), winprobs, color="green", label="winprob")
+            #     ax3.legend()
+            #     name = f"training_conv:{iteration}_{self.make_random_str(16)}"
+            #     fig.savefig(os.path.join(self.dirPath, name) +".pdf", format = "pdf") 
+
+
         except AssertionError as msg:
             print(msg)
             final_action = None
@@ -620,18 +643,16 @@ class TorchGame():
         return final_action
 
     # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
-    def FilterActions(self, Actions, q=8, share_of_variance=.8):
+    def FilterActions(self, Actions, q_max=8, share_of_variance=.8):
 
-        def PCA(a_mat, q_max):
-            m, n = a_mat.size()
-            (U, S, V) = torch.svd(a_mat)#, q=min(q, m, n))
+        def PCA(a_mat):
+            (U, S, V) = torch.svd(a_mat)
 
             ind = ((torch.cumsum(S, 0) / torch.sum(S)) > share_of_variance).tolist()
             first_true = ind.index(True)
 
             q = min(q_max,first_true)
             return V[:,:q]
-            # return (U, S, V, q)
 
         def k_means_elbow(dataset):
             sum_of_squared_distances = []
@@ -719,11 +740,11 @@ class TorchGame():
         filtered = list(filter(lambda a: ~torch.any(torch.isnan(a)), Actions))
 
         A = torch.cat((filtered), dim=1).T # number of converged actions x 2*numTechs
-        V = PCA(A, q)
+        V = PCA(A)
         pc_projection = A @ V
         centers, n_acts = k_means(pc_projection, plot_silhouette=False)
         centers = torch.tensor(centers)
-        actions = (centers @ V.T).T 
+        actions = (centers @ V.T).T #reverse projection of center points frim k-means
         acts = []
         for a in range(n_acts):
             acts.append(actions[:, a])
@@ -735,10 +756,11 @@ class TorchGame():
         
         pool = mp.pool.Pool(os.cpu_count())
 
-        
         ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint])
+        
         optim_params = [{"State" : State, "Action": ActionStartPoints[:,:,i], "num_reps" : self.NumRepsBattle} for i in range(self.N_actions_startpoint)]
-        chunksize = int(self.N_actions_startpoint / os.cpu_count()) 
+        # chunksize = int(self.N_actions_startpoint / os.cpu_count())
+        chunksize = None
         NashEquilibria = pool.map_async(self.OptimizeActionMP, optim_params, chunksize = chunksize).get(3000)
         
         if self.filter_actions:
@@ -756,7 +778,8 @@ class TorchGame():
         #     rad=self.Players_action_length[1]), 0, -1)
         # ActionStartPoints = torch.stack((P1_points, P2_points), dim=1)
 
-        ActionStartPoints = torch.rand(size=[14, 2, self.N_actions_startpoint])
+        ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint])
+        ActionStartPoints = self.normAction(ActionStartPoints)
         NashEquilibria = []
         for i in tqdm(range(self.N_actions_startpoint), desc=f"optimizing actions from {self.N_actions_startpoint} random  startingPoints", position=1, leave=True):
 
@@ -780,11 +803,9 @@ class TorchGame():
 
         while (len(self.Q) > 0):
             st, t, parent_node_id = self.Q.pop() #the state which we are currently examining
-            if self.N_actions_startpoint > os.cpu_count() * 3:
-                act = self.GetActionsMP(st) # small number of nash equilibria
-            else:
-                act = self.GetActions(st
-                                      )
+
+            act = self.GetActionsMP(st) # small number of nash equilibria
+
             diff = self.Max_actions_chosen - len(act)
             closed = diff * sum([self.Max_actions_chosen ** h for h in range(self.Horizon - t - 1)])
             pbar.update(len(act) + closed)
@@ -805,12 +826,21 @@ class TorchGame():
 
 if __name__ == "__main__":
     # FullGame = TorchGame(Horizon=5, Max_actions_chosen=6, N_actions_startpoint=96, I=.5, D=5,
-    #                      Start_action_length=[5, 5], Max_optim_iter=250, Filter_actions=True,
+    #                      Players_action_length=[5, 5], Max_optim_iter=250, Filter_actions=True,
     #                      Stochastic_state_update=True, base_params="custom", NumRepsBattle = 8)
     
-    FullGame = TorchGame(Horizon=2, Max_actions_chosen=3, N_actions_startpoint=50, I=.5, D=5,
-                         Start_action_length=[5, 5], Max_optim_iter=7, Filter_actions=True,
-                         Stochastic_state_update=True, base_params="paper", NumRepsBattle = 2)
+    
+    params = {
+        "Horizon":5, "Max_actions_chosen":6, "N_actions_startpoint":120, "I":.5, "D":5,
+                         "Players_action_length":[5, 5], "Max_optim_iter":150, "Filter_actions":True,
+                         "Stochastic_state_update":True, "base_params":"paper", "NumRepsBattle":96
+    }
+    FullGame = TorchGame(**params)
+    # FullGame = TorchGame(Horizon=2, Max_actions_chosen=3, N_actions_startpoint=10, I=.5, D=5,
+    #                      Players_action_length=[5, 5], Max_optim_iter=20, Filter_actions=True,
+    #                      Stochastic_state_update=True, base_params="paper", NumRepsBattle=2)
     hist = FullGame.Run()
-    hist.save_to_file("FullRun.pkl")
-    hist.send_email(test=True)
+    # dirPath = hist.make_dir()
+    hist.save_to_file_2(FullGame.dirPath, params)
+    # hist.save_to_file("FullRun.pkl")
+    hist.send_email(test=False)

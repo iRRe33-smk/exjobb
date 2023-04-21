@@ -2,12 +2,11 @@ import pandas as pd
 from treelib import Node, Tree
 import networkx as nx
 from matplotlib import pyplot as plt
-import os, time
+import os, time, json
 from datetime import datetime
 
 import smtplib
 from email.mime.text import MIMEText
-
 import pickle
 
 class History():
@@ -68,6 +67,26 @@ class History():
 
         # return
 
+    def make_dir(self):
+        date = datetime.now().strftime("%Y-%m-%d")
+        dirPath = os.path.join("saved_runs", date)
+        
+        for i in range(1000):
+            sub = "."+str(i)
+            if not os.path.exists(dirPath + sub):
+                os.mkdir(dirPath + sub)
+                break
+        return dirPath + sub
+    
+    def save_to_file_2(self,dirPath,metadata):
+        df_hist = pd.DataFrame.from_records(self.HistoryList)
+        df_hist.to_pickle(os.path.join(dirPath, "History.pkl"))
+        
+        with open(os.path.join(dirPath, "metadata.json"), "w+") as f:
+            json.dump(metadata,f)
+        
+        
+        
     def save_to_file(self, name = "history_data.pkl", timestamp = True):
         print(os.listdir())
         if timestamp:
@@ -75,7 +94,7 @@ class History():
         else:
             dt = ""
 
-        filename = os.path.join("saved_runs", name + dt)
+        filename = os.path.join("saved_runs",  dt + name)
         df_hist = pd.DataFrame.from_records(self.HistoryList)
         print(df_hist)
         df_hist.to_pickle(path=filename)
@@ -114,7 +133,6 @@ class History():
         return s
 
 
-    #def PCA(self):
 
 
 if __name__ == "__main__":
