@@ -51,22 +51,6 @@ class History():
 
         return self.HistoryTree.show()
 
-        # labels = nx.get_node_attributes(self.HistoryGraph, "label")
-        # options = {
-        #     "node_size": 200,
-        #     "alpha": 0.5,
-        #     "node_color": "blue",
-        #     "labels": labels,
-        #     "font_size": 8,
-        # }
-        # pos = nx.spring_layout(self.HistoryGraph)
-        # #pos = nx.multipartite_layout(self.HistoryGraph, subset_key="layer", scale=10)
-        # nx.draw_networkx(self.HistoryGraph, pos, **options)
-        # plt.show()
-        # #plt.draw(self.HistoryGraph)
-
-        # return
-
     def make_dir(self):
         date = datetime.now().strftime("%Y-%m-%d")
         dirPath = os.path.join("saved_runs", date)
@@ -78,11 +62,14 @@ class History():
                 break
         return dirPath + sub
     
-    def save_to_file_2(self,dirPath,metadata):
-        
+    def save_to_file_2(self,metadata):
+
+        dirPath = self.make_dir()
         df_hist = pd.DataFrame.from_records(self.HistoryList)
+
         histPath = os.path.join(dirPath, "History.pkl")
         df_hist.to_pickle(histPath)
+
         self.SavedToFile = histPath
         with open(os.path.join(dirPath, "metadata.json"), "w+") as f:
             json.dump(metadata,f)
