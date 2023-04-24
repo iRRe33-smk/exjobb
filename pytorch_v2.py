@@ -541,6 +541,7 @@ class TorchGame():
         
         def LR_sched(it, max=500, div=50, add=100):
             return torch.tensor(max / (math.exp((it + 1)/div)) + add)
+        
         nu_n = 100 * torch.ones((self.N_Technologies * 2, 1), device=self.DEVICE)
         gamma2 = 1 * torch.tensor(1, device=self.DEVICE)  # step size nu
         xi_1 = 1 * torch.tensor(1, device=self.DEVICE)  # regularization, pushes solution towards NE
@@ -833,12 +834,12 @@ if __name__ == "__main__":
          "DEVICE": "cpu", "MultiProcess": False
     }
     params_test = {
-        "Horizon": 3, "Max_actions_chosen": 2, "N_actions_startpoint": 32, "I": .5, "D": 5,
-        "Players_action_length": [5, 5], "Max_optim_iter": 32, "Filter_actions": True,
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 4,
+        "Horizon": 3, "Max_actions_chosen": 2, "N_actions_startpoint": 8, "I": .5, "D": 5,
+        "Players_action_length": [5, 5], "Max_optim_iter": 75, "Filter_actions": True,
+        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 8,
         "DEVICE": "cpu", "MultiProcess": True
     }
-    params = params_medium
+    params = params_test
     FullGame = TorchGame(**params)
 
     hist = FullGame.Run()
