@@ -1,11 +1,12 @@
 import torch
 from torch.autograd.functional import jacobian, hessian, hvp, vhp
-from torch import multiprocessing as mp
+from torch import multiprocessing as tmp
+
 #from functorch import jvp, vmap
 #from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
 import numpy as np
 from tqdm import tqdm
-import time, math, json, os, random, string
+import time, math, json, os, random, string, multiprocessing as mp
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -31,21 +32,18 @@ class TorchGame():
     def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
                  Players_action_length=[10, 10], I=1, D=3, omega = .1, Stochastic_state_update = True,
                  Max_optim_iter = 50, Filter_actions = True, base_params = "paper",
-                 NumRepsBattle = 8) -> None:
+                 NumRepsBattle = 8, DEVICE = "cpu", MultiProcess= False) -> None:
+        self.DEVICE = DEVICE
 
-        self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-        
-        # torch.manual_seed(1337)
-        # global variables
-        #self.N_Technologies = N_Technologies
         self.Horizon = Horizon
-        self.N_actions_startpoint = N_actions_startpoint
+        self.N_actions_startpoint = torch.tensor(N_actions_startpoint, device=self.DEVICE)
         self.Max_actions_chosen = Max_actions_chosen
-        self.Players_action_length = torch.tensor(Players_action_length)
+        self.Players_action_length = torch.tensor(Players_action_length, device=self.DEVICE)
         self.Stochastic_state_update = Stochastic_state_update
         self.Max_optim_iter = Max_optim_iter
         self.NumRepsBattle = NumRepsBattle
-        
+        self.MultiProcess = MultiProcess
+
         # Used in TRL calculations
         self.I = I
         self.D = D
@@ -62,19 +60,19 @@ class TorchGame():
 
         df_stat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="StartingState", header=0, index_col=0)
         print(df_stat)
-        self.InitialState = torch.tensor(df_stat.astype(float).values)
+        self.InitialState = torch.tensor(df_stat.astype(float).values, device=self.DEVICE)
 
         df_capaMat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="ConversionMatrix", header=0, index_col=0)
-        self.PARAMCONVERSIONMATRIX = torch.tensor(df_capaMat.astype(float).values)
+        self.PARAMCONVERSIONMATRIX = torch.tensor(df_capaMat.astype(float).values, device=self.DEVICE)
         print(df_capaMat)
 
         if base_params == "custom":
             df_baseParams_paper = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="BaseParamsCustom", header=0, index_col=0)
-            self.baseLine_params_paper = torch.tensor(df_baseParams_paper.astype(float).values)
+            self.baseLine_params_paper = torch.tensor(df_baseParams_paper.astype(float).values, device=self.DEVICE)
         else:
 
             df_baseParams_paper = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="BaseParamsPaper", header=0, index_col=0)
-            self.baseLine_params_paper = torch.tensor(df_baseParams_paper.astype(float).values)
+            self.baseLine_params_paper = torch.tensor(df_baseParams_paper.astype(float).values, device=self.DEVICE)
 
         self.assign_baseline_theta()
         
@@ -85,16 +83,11 @@ class TorchGame():
             dat = json.load(f)
             mu = [dat[k]["mu"] for k in dat.keys()] * 2
             sigma = [dat[k]["sigma"] for k in dat.keys()] * 2
-            self.xi_params_mu = torch.tensor(mu)
-            self.xi_params_sigma = torch.tensor(sigma)
+            self.xi_params_mu = torch.tensor(mu, device=self.DEVICE)
+            self.xi_params_sigma = torch.tensor(sigma, device=self.DEVICE)
 
             # print(mu, "\n", sigma)
 
-        # with open("config_files/xi_params.json") as f:
-        #     params = json.load(f)
-        #     self.xi_params_mu = torch.cat((torch.tensor(params["mu"][:self.N_Technologies]), torch.tensor(params["mu"][:self.N_Technologies])), dim=0)
-        #     self.xi_params_sigma = torch.cat((torch.tensor(params["sigma"][:self.N_Technologies]),torch.tensor(params["sigma"][:self.N_Technologies])), dim=0)
-        #
     
     def make_random_str(self, length = 16):
         letters = string.ascii_lowercase
@@ -832,9 +825,9 @@ if __name__ == "__main__":
     
     
     params = {
-        "Horizon":4, "Max_actions_chosen":4, "N_actions_startpoint":32, "I":.5, "D":5,
-                         "Players_action_length":[5, 5], "Max_optim_iter":64, "Filter_actions":True,
-                         "Stochastic_state_update":True, "base_params":"paper", "NumRepsBattle":4
+        "Horizon":5, "Max_actions_chosen":6, "N_actions_startpoint":64, "I":.5, "D":5,
+                         "Players_action_length":[5, 5], "Max_optim_iter":96, "Filter_actions":True,
+                         "Stochastic_state_update":True, "base_params":"paper", "NumRepsBattle":50
     }
     FullGame = TorchGame(**params)
     # FullGame = TorchGame(Horizon=2, Max_actions_chosen=3, N_actions_startpoint=10, I=.5, D=5,
