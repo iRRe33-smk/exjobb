@@ -32,7 +32,7 @@ class TorchGame():
     def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
                  Players_action_length=[10, 10], I=1, D=3, omega = .1, Stochastic_state_update = True,
                  Max_optim_iter = 50, Filter_actions = True, base_params = "paper",
-                 NumRepsBattle = 8, DEVICE = "cpu") -> None:
+                 NumRepsBattle = 8, DEVICE = "cpu", MultiProcess= False) -> None:
         self.DEVICE = DEVICE
        
         self.Horizon = Horizon
@@ -42,6 +42,7 @@ class TorchGame():
         self.Stochastic_state_update = Stochastic_state_update
         self.Max_optim_iter = Max_optim_iter
         self.NumRepsBattle = NumRepsBattle
+        self.MultiProcess = MultiProcess
         
         # Used in TRL calculations
         self.I = I
@@ -802,7 +803,10 @@ class TorchGame():
         while (len(self.Q) > 0):
             st, t, parent_node_id = self.Q.pop() #the state which we are currently examining
 
-            act = self.GetActionsMP(st) # small number of nash equilibria
+            if self.MultiProcess:
+                act = self.GetActionsMP(st) # small number of nash equilibria
+            else:
+                act = self.GetActions(st)
 
             diff = self.Max_actions_chosen - len(act)
             closed = diff * sum([self.Max_actions_chosen ** h for h in range(self.Horizon - t - 1)])
@@ -823,20 +827,21 @@ class TorchGame():
 
 
 if __name__ == "__main__":
-    # FullGame = TorchGame(Horizon=5, Max_actions_chosen=6, N_actions_startpoint=96, I=.5, D=5,
-    #                      Players_action_length=[5, 5], Max_optim_iter=250, Filter_actions=True,
-    #                      Stochastic_state_update=True, base_params="custom", NumRepsBattle = 8)
-    
-    
-    params = {
-        "Horizon":3, "Max_actions_chosen":5, "N_actions_startpoint":32, "I":.5, "D":5,
-                         "Players_action_length":[5, 5], "Max_optim_iter":96, "Filter_actions":True,
-                         "Stochastic_state_update":True, "base_params":"paper", "NumRepsBattle":50,
-                         "DEVICE" : "cpu"
+    params_medium = {
+        "Horizon": 5, "Max_actions_chosen": 4, "N_actions_startpoint": 64, "I": .5, "D": 5,
+         "Players_action_length": [5, 5], "Max_optim_iter": 64, "Filter_actions": True,
+         "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 16,
+         "DEVICE": "cpu", "MultiProcess": False
     }
+    params_test = {
+        "Horizon": 3, "Max_actions_chosen": 2, "N_actions_startpoint": 32, "I": .5, "D": 5,
+        "Players_action_length": [5, 5], "Max_optim_iter": 32, "Filter_actions": True,
+        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 4,
+        "DEVICE": "cpu", "MultiProcess": False
+    }
+    params = params_test
     FullGame = TorchGame(**params)
-   
-  
+
     hist = FullGame.Run()
     hist.save_to_file_2(FullGame.dirPath, params)
     hist.send_email(test=False)

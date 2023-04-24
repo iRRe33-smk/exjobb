@@ -80,28 +80,11 @@ class History():
     
     def save_to_file_2(self,dirPath,metadata):
         df_hist = pd.DataFrame.from_records(self.HistoryList)
-        df_hist.to_pickle(os.path.join(dirPath, "History.pkl"))
-        
+        histPath = os.path.join(dirPath, "History.pkl")
+        df_hist.to_pickle(histPath)
+        self.SavedToFile = histPath
         with open(os.path.join(dirPath, "metadata.json"), "w+") as f:
             json.dump(metadata,f)
-        
-        
-        
-    def save_to_file(self, name = "history_data.pkl", timestamp = True):
-        print(os.listdir())
-        if timestamp:
-            dt = "--" + datetime.now().strftime("%Y.%m.%d_%H.%M")
-        else:
-            dt = ""
-
-        filename = os.path.join("saved_runs",  dt + name)
-        df_hist = pd.DataFrame.from_records(self.HistoryList)
-        print(df_hist)
-        df_hist.to_pickle(path=filename)
-        self.SavedToFile = filename
-
-        # with open(filename, "w+") as f:
-        #     df.to_p
 
     def send_email(self, test = True, sender = "datorspelmail@gmail.com",  recipients = ["isabe723@student.liu.se", "lukpe879@student.liu.se"]):
         if test:
@@ -109,7 +92,6 @@ class History():
             msg['Subject'] = "test-message"
 
             rec = recipients[0]
-
 
         else:
             try:
