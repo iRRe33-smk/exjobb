@@ -1,11 +1,12 @@
 import torch
 from torch.autograd.functional import jacobian, hessian, hvp, vhp
-from torch import multiprocessing as mp
+from torch import multiprocessing as tmp
+
 #from functorch import jvp, vmap
 #from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
 import numpy as np
 from tqdm import tqdm
-import time, math, json, os, random, string
+import time, math, json, os, random, string, multiprocessing as mp
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -31,17 +32,13 @@ class TorchGame():
     def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
                  Players_action_length=[10, 10], I=1, D=3, omega = .1, Stochastic_state_update = True,
                  Max_optim_iter = 50, Filter_actions = True, base_params = "paper",
-                 NumRepsBattle = 8) -> None:
-
-        self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-        
-        # torch.manual_seed(1337)
-        # global variables
-        #self.N_Technologies = N_Technologies
+                 NumRepsBattle = 8, DEVICE = "cpu") -> None:
+        self.DEVICE = DEVICE
+       
         self.Horizon = Horizon
-        self.N_actions_startpoint = N_actions_startpoint
+        self.N_actions_startpoint = torch.tensor(N_actions_startpoint, device=self.DEVICE)
         self.Max_actions_chosen = Max_actions_chosen
-        self.Players_action_length = torch.tensor(Players_action_length)
+        self.Players_action_length = torch.tensor(Players_action_length, device=self.DEVICE)
         self.Stochastic_state_update = Stochastic_state_update
         self.Max_optim_iter = Max_optim_iter
         self.NumRepsBattle = NumRepsBattle
@@ -62,19 +59,19 @@ class TorchGame():
 
         df_stat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="StartingState", header=0, index_col=0)
         print(df_stat)
-        self.InitialState = torch.tensor(df_stat.astype(float).values)
+        self.InitialState = torch.tensor(df_stat.astype(float).values, device=self.DEVICE)
 
         df_capaMat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="ConversionMatrix", header=0, index_col=0)
-        self.PARAMCONVERSIONMATRIX = torch.tensor(df_capaMat.astype(float).values)
+        self.PARAMCONVERSIONMATRIX = torch.tensor(df_capaMat.astype(float).values, device=self.DEVICE)
         print(df_capaMat)
 
         if base_params == "custom":
             df_baseParams_paper = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="BaseParamsCustom", header=0, index_col=0)
-            self.baseLine_params_paper = torch.tensor(df_baseParams_paper.astype(float).values)
+            self.baseLine_params_paper = torch.tensor(df_baseParams_paper.astype(float).values, device=self.DEVICE)
         else:
 
             df_baseParams_paper = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="BaseParamsPaper", header=0, index_col=0)
-            self.baseLine_params_paper = torch.tensor(df_baseParams_paper.astype(float).values)
+            self.baseLine_params_paper = torch.tensor(df_baseParams_paper.astype(float).values, device=self.DEVICE)
 
         self.assign_baseline_theta()
         
@@ -85,16 +82,11 @@ class TorchGame():
             dat = json.load(f)
             mu = [dat[k]["mu"] for k in dat.keys()] * 2
             sigma = [dat[k]["sigma"] for k in dat.keys()] * 2
-            self.xi_params_mu = torch.tensor(mu)
-            self.xi_params_sigma = torch.tensor(sigma)
+            self.xi_params_mu = torch.tensor(mu, device=self.DEVICE)
+            self.xi_params_sigma = torch.tensor(sigma, device=self.DEVICE)
 
             # print(mu, "\n", sigma)
 
-        # with open("config_files/xi_params.json") as f:
-        #     params = json.load(f)
-        #     self.xi_params_mu = torch.cat((torch.tensor(params["mu"][:self.N_Technologies]), torch.tensor(params["mu"][:self.N_Technologies])), dim=0)
-        #     self.xi_params_sigma = torch.cat((torch.tensor(params["sigma"][:self.N_Technologies]),torch.tensor(params["sigma"][:self.N_Technologies])), dim=0)
-        #
     
     def make_random_str(self, length = 16):
         letters = string.ascii_lowercase
@@ -248,15 +240,15 @@ class TorchGame():
             return torch.stack((theta[:, 1], theta[:, 0]), dim=1)
 
         initiativeProbabilities = self.InitiativeProbabilities(theta[1, 0], theta[1, 1], c = 1)
-        results = torch.zeros(size=[3],dtype=torch.float64)
+        results = torch.zeros(size=[3],dtype=torch.float64, device=self.DEVICE)
         
         # A init
         A_n_distr = PseudoDistr(theta[0, 0])
         B_n_distr = PseudoDistr(theta[0, 1])
        
-        A_sample = A_n_distr.sample()
-        B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_sample, B_n_distr.sample())
-        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta), B_n_distr.sample(), A_sample)               
+        A_sample = A_n_distr.sample().to(device = self.DEVICE)
+        B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_sample, B_n_distr.sample().to(device = self.DEVICE))
+        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta), B_n_distr.sample().to(device = self.DEVICE), A_sample)               
         prob = p_A_lives
         results[0] = prob
        
@@ -264,8 +256,8 @@ class TorchGame():
         A_n_distr = PseudoDistr(theta[0,0])
         B_n_distr = PseudoDistr(theta[0,1])
        
-        B_sample = B_n_distr.sample()
-        A_sample = A_n_distr.sample()
+        B_sample = B_n_distr.sample().to(device = self.DEVICE)
+        A_sample = A_n_distr.sample().to(device = self.DEVICE)
         A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta),  B_sample, A_sample)
         # B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_sample,  B_sample)
         prob = p_A_lives
@@ -275,8 +267,9 @@ class TorchGame():
         A_n_distr = PseudoDistr(theta[0,0])
         B_n_distr = PseudoDistr(theta[0,1])
        
-        B_sample = B_n_distr.sample()
-        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta),  B_sample, A_n_distr.sample())
+        B_sample = B_n_distr.sample().to(device = self.DEVICE)
+        A_sample = A_n_distr.sample().to(device = self.DEVICE)
+        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta), B_sample, A_sample)
         # B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_n_distr.sample(), B_sample)
         prob = p_A_lives
         results[2] = prob
@@ -301,7 +294,7 @@ class TorchGame():
         B_stay = theta[7, 1]
 
         mu_damage_AB = A_attack / B_stay
-        sigma_damage_AB = 1/3
+        sigma_damage_AB = torch.tensor(1/3, device=self.DEVICE)
 
         mean_net_AB = A0 * A_offPower - B0 * B_defPower
         var_net_AB = A0 * A_offPower * (1 - A_offProb) + B0 * B_defPower * (1 - B_defProb)
@@ -313,8 +306,8 @@ class TorchGame():
 
         mean_nominal_B = B0 - mean_net_AB * mu_damage_AB
         var_nominal_B = mean_net_AB * sigma_damage_AB**2 + var_net_AB * mu_damage_AB ** 2 - \
-                        2 * sigma_damage_AB ** 2 * mean_net_AB * AB_net_distr.cdf(torch.tensor([0.0])) + \
-                        2 * sigma_damage_AB ** 2 * var_net_AB * torch.exp(AB_net_distr.log_prob(torch.tensor([0.0])))
+                        2 * sigma_damage_AB ** 2 * mean_net_AB * AB_net_distr.cdf(0.0) + \
+                        2 * sigma_damage_AB ** 2 * var_net_AB * torch.exp(AB_net_distr.log_prob(0.0))
 
         B1_nominal_distr = torch.distributions.Normal(
             loc=mean_nominal_B,
@@ -520,11 +513,12 @@ class TorchGame():
 
         grad_flipper = torch.tensor(
             [1.0 if i < self.N_Technologies else -1.0 for i in range(self.N_Technologies * 2)]
-        ).unsqueeze(dim=-1)
+        , device=self.DEVICE).unsqueeze(dim=-1)
 
-        hess_flipper = torch.zeros(size=(self.N_Technologies * 2, self.N_Technologies * 2))
+        hess_flipper = torch.zeros(size=(self.N_Technologies * 2, self.N_Technologies * 2), device=self.DEVICE)
         hess_flipper[0:self.N_Technologies, :] = 1.0
         hess_flipper[self.N_Technologies:, :] = -1.0
+        hess_flipper.cuda()
 
         params_jacobian = {
             "vectorize": True,
@@ -547,9 +541,9 @@ class TorchGame():
         
         def LR_sched(it, max=500, div=50, add=100):
             return torch.tensor(max / (math.exp((it + 1)/div)) + add)
-        nu_n = 100 * torch.ones((self.N_Technologies * 2, 1))
-        gamma2 = 1  # step size nu
-        xi_1 = 1 * torch.tensor(1)  # regularization, pushes solution towards NE
+        nu_n = 100 * torch.ones((self.N_Technologies * 2, 1), device=self.DEVICE)
+        gamma2 = 1 *  torch.tensor(1, device=self.DEVICE)  # step size nu
+        xi_1 = 1 * torch.tensor(1, device=self.DEVICE)  # regularization, pushes solution towards NE
         convergence_hist = [False] * 7
         iteration = 0
 
@@ -643,7 +637,6 @@ class TorchGame():
 
         return final_action
 
-    # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
     def FilterActions(self, Actions, q_max=8, share_of_variance=.8):
 
         def PCA(a_mat):
@@ -755,21 +748,25 @@ class TorchGame():
 
     def GetActionsMP(self, State):
         
-        # pool = mp.pool.Pool(os.cpu_count())
-        pool = mp.Pool(os.cpu_count())
-        ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint])
-        
+        ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint], device = self.DEVICE)
+
         optim_params = [{"State" : State, "Action": ActionStartPoints[:,:,i], "num_reps" : self.NumRepsBattle} for i in range(self.N_actions_startpoint)]
-        # chunksize = int(self.N_actions_startpoint / os.cpu_count())
-        chunksize = None
-        NashEquilibria = pool.map_async(self.OptimizeActionMP, optim_params, chunksize = chunksize).get(3000)
-        
+        if self.DEVICE == "cpu":
+            processes = 8
+            p = mp.pool.Pool(processes)
+            chunksize = int(self.N_actions_startpoint / processes)
+        else:
+            p = tmp.Pool()
+            
+        with p as pool:
+            # chunksize = None
+            results = pool.map_async(self.OptimizeActionMP, optim_params, chunksize = chunksize)
+            NashEquilibria = results.get()
         if self.filter_actions:
             return self.FilterActions(NashEquilibria)
         else:
             return NashEquilibria[:self.Max_actions_chosen]
 
-    
     def GetActions(self, State):
         # P1_points = self._randomPointsInCube()
         # P2_points = self._randomPointsInCube()
@@ -779,8 +776,8 @@ class TorchGame():
         #     rad=self.Players_action_length[1]), 0, -1)
         # ActionStartPoints = torch.stack((P1_points, P2_points), dim=1)
 
-        ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint])
-        ActionStartPoints = self.normAction(ActionStartPoints)
+        ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint], device = self.DEVICE)
+        # ActionStartPoints = self.normAction(ActionStartPoints)
         NashEquilibria = []
         for i in tqdm(range(self.N_actions_startpoint), desc=f"optimizing actions from {self.N_actions_startpoint} random  startingPoints", position=1, leave=True):
 
@@ -798,7 +795,7 @@ class TorchGame():
 
         node_id = 0
         self.Q.append((self.InitialState, 0, node_id))
-        self.History.add_data(node_id, None, 0, self.InitialState.numpy(), None, 0)
+        self.History.add_data(node_id, None, 0, self.InitialState.cpu().numpy(), None, 0)
 
         pbar = tqdm(desc = "number of states evaluated", total = maxactions, position= 0, leave= True)
 
@@ -832,16 +829,14 @@ if __name__ == "__main__":
     
     
     params = {
-        "Horizon":5, "Max_actions_chosen":6, "N_actions_startpoint":64, "I":.5, "D":5,
+        "Horizon":3, "Max_actions_chosen":5, "N_actions_startpoint":32, "I":.5, "D":5,
                          "Players_action_length":[5, 5], "Max_optim_iter":96, "Filter_actions":True,
-                         "Stochastic_state_update":True, "base_params":"paper", "NumRepsBattle":50
+                         "Stochastic_state_update":True, "base_params":"paper", "NumRepsBattle":50,
+                         "DEVICE" : "cpu"
     }
     FullGame = TorchGame(**params)
-    # FullGame = TorchGame(Horizon=2, Max_actions_chosen=3, N_actions_startpoint=10, I=.5, D=5,
-    #                      Players_action_length=[5, 5], Max_optim_iter=20, Filter_actions=True,
-    #                      Stochastic_state_update=True, base_params="paper", NumRepsBattle=2)
+   
+  
     hist = FullGame.Run()
-    # dirPath = hist.make_dir()
     hist.save_to_file_2(FullGame.dirPath, params)
-    # hist.save_to_file("FullRun.pkl")
     hist.send_email(test=False)
