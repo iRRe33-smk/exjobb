@@ -79,6 +79,7 @@ class History():
         return dirPath + sub
     
     def save_to_file_2(self,dirPath,metadata):
+        
         df_hist = pd.DataFrame.from_records(self.HistoryList)
         df_hist.to_pickle(os.path.join(dirPath, "History.pkl"))
         

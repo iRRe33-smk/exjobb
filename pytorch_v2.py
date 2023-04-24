@@ -832,9 +832,9 @@ if __name__ == "__main__":
     
     
     params = {
-        "Horizon":5, "Max_actions_chosen":6, "N_actions_startpoint":64, "I":.5, "D":5,
-                         "Players_action_length":[5, 5], "Max_optim_iter":96, "Filter_actions":True,
-                         "Stochastic_state_update":True, "base_params":"paper", "NumRepsBattle":50
+        "Horizon":4, "Max_actions_chosen":4, "N_actions_startpoint":32, "I":.5, "D":5,
+                         "Players_action_length":[5, 5], "Max_optim_iter":64, "Filter_actions":True,
+                         "Stochastic_state_update":True, "base_params":"paper", "NumRepsBattle":4
     }
     FullGame = TorchGame(**params)
     # FullGame = TorchGame(Horizon=2, Max_actions_chosen=3, N_actions_startpoint=10, I=.5, D=5,
