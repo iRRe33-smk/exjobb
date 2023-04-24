@@ -1,10 +1,11 @@
 import torch
 from torch.autograd.functional import jacobian, hessian, hvp, vhp
+from torch import multiprocessing as mp
 #from functorch import jvp, vmap
 #from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
 import numpy as np
 from tqdm import tqdm
-import time, math, json, os, multiprocessing as mp, random, string
+import time, math, json, os, random, string
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -593,8 +594,8 @@ class TorchGame():
                             check1 < 1E-3 and torch.all(check2 < 5E-1) and iteration > 10
                     )
                     
-                    winprob_n = sum([scoringFun(z_n) for _ in range(num_reps)])/num_reps
-                    winprobs.append(winprob_n)
+                    # winprob_n = sum([scoringFun(z_n) for _ in range(num_reps)])/num_reps
+                    # winprobs.append(winprob_n)
                     iteration += 1
                     
                     # if False and (iteration % 10 == 0 or iteration < 5):
@@ -754,8 +755,8 @@ class TorchGame():
 
     def GetActionsMP(self, State):
         
-        pool = mp.pool.Pool(os.cpu_count())
-
+        # pool = mp.pool.Pool(os.cpu_count())
+        pool = mp.Pool(os.cpu_count())
         ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint])
         
         optim_params = [{"State" : State, "Action": ActionStartPoints[:,:,i], "num_reps" : self.NumRepsBattle} for i in range(self.N_actions_startpoint)]
@@ -831,9 +832,9 @@ if __name__ == "__main__":
     
     
     params = {
-        "Horizon":5, "Max_actions_chosen":6, "N_actions_startpoint":120, "I":.5, "D":5,
-                         "Players_action_length":[5, 5], "Max_optim_iter":150, "Filter_actions":True,
-                         "Stochastic_state_update":True, "base_params":"paper", "NumRepsBattle":96
+        "Horizon":5, "Max_actions_chosen":6, "N_actions_startpoint":64, "I":.5, "D":5,
+                         "Players_action_length":[5, 5], "Max_optim_iter":96, "Filter_actions":True,
+                         "Stochastic_state_update":True, "base_params":"paper", "NumRepsBattle":50
     }
     FullGame = TorchGame(**params)
     # FullGame = TorchGame(Horizon=2, Max_actions_chosen=3, N_actions_startpoint=10, I=.5, D=5,
