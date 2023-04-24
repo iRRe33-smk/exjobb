@@ -519,8 +519,7 @@ class TorchGame():
         hess_flipper = torch.zeros(size=(self.N_Technologies * 2, self.N_Technologies * 2), device=self.DEVICE)
         hess_flipper[0:self.N_Technologies, :] = 1.0
         hess_flipper[self.N_Technologies:, :] = -1.0
-        hess_flipper.cuda()
-
+        hess_flipper
         params_jacobian = {
             "vectorize": True,
             "create_graph": False,
@@ -543,7 +542,7 @@ class TorchGame():
         def LR_sched(it, max=500, div=50, add=100):
             return torch.tensor(max / (math.exp((it + 1)/div)) + add)
         nu_n = 100 * torch.ones((self.N_Technologies * 2, 1), device=self.DEVICE)
-        gamma2 = 1 *  torch.tensor(1, device=self.DEVICE)  # step size nu
+        gamma2 = 1 * torch.tensor(1, device=self.DEVICE)  # step size nu
         xi_1 = 1 * torch.tensor(1, device=self.DEVICE)  # regularization, pushes solution towards NE
         convergence_hist = [False] * 7
         iteration = 0
@@ -828,7 +827,7 @@ class TorchGame():
 
 if __name__ == "__main__":
     params_medium = {
-        "Horizon": 5, "Max_actions_chosen": 4, "N_actions_startpoint": 64, "I": .5, "D": 5,
+        "Horizon": 5, "Max_actions_chosen": 5, "N_actions_startpoint": 64, "I": .5, "D": 5,
          "Players_action_length": [5, 5], "Max_optim_iter": 64, "Filter_actions": True,
          "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 16,
          "DEVICE": "cpu", "MultiProcess": False
@@ -837,11 +836,11 @@ if __name__ == "__main__":
         "Horizon": 3, "Max_actions_chosen": 2, "N_actions_startpoint": 32, "I": .5, "D": 5,
         "Players_action_length": [5, 5], "Max_optim_iter": 32, "Filter_actions": True,
         "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 4,
-        "DEVICE": "cpu", "MultiProcess": False
+        "DEVICE": "cpu", "MultiProcess": True
     }
-    params = params_test
+    params = params_medium
     FullGame = TorchGame(**params)
 
     hist = FullGame.Run()
-    hist.save_to_file_2(FullGame.dirPath, params)
+    hist.save_to_file_2(params)
     hist.send_email(test=False)
