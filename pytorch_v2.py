@@ -151,7 +151,7 @@ class TorchGame():
         act_norm = (self.Players_action_length / torch.sum(exp_act, dim=0)) * exp_act
         return act_norm
 
-    def Update_State(self, State, Action, override_stochastic = None | bool):
+    def Update_State(self, State, Action, override_stochastic = None):
 
         with torch.no_grad():
            
