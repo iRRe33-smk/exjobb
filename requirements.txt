@@ -10,3 +10,4 @@ treelib
 networkx
 fastparquet
 tqdm
+torchviz

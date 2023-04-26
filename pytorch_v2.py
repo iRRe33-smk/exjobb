@@ -1,7 +1,7 @@
 import torch
 from torch.autograd.functional import jacobian, hessian, hvp, vhp
 from torch import multiprocessing as tmp
-
+# import torchviz
 #from functorch import jvp, vmap
 #from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
 import numpy as np
@@ -30,7 +30,7 @@ class PseudoDistr():
 
 class TorchGame():
     def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
-                 Players_action_length=[10, 10], I=1, D=3, omega = .1, Stochastic_state_update = True,
+                 Players_action_length=[10, 10], I=.5, D=5, omega = .1, Stochastic_state_update = True,
                  Max_optim_iter = 50, Filter_actions = True, base_params = "paper",
                  NumRepsBattle = 8, DEVICE = "cpu", MultiProcess= False) -> None:
         self.DEVICE = DEVICE
@@ -54,7 +54,7 @@ class TorchGame():
 
         self.FINAL_ACTIONS = []
         self.History = History()
-        self.dirPath = self.History.make_dir()
+        # self.dirPath = self.History.make_dir()
         self.Q = []
 
 
@@ -88,7 +88,11 @@ class TorchGame():
 
             # print(mu, "\n", sigma)
 
-    
+        
+        
+        self.TechnologyNames = df_capaMat.columns.to_list()
+        self.ParamNames = df_capaMat.index.to_list()
+          
     def make_random_str(self, length = 16):
         letters = string.ascii_lowercase
         str = ''.join([random.choice(letters) for _ in range(length)]) 
@@ -132,7 +136,10 @@ class TorchGame():
         nPoints = self.N_actions_startpoint
         nDim = self.N_Technologies
         return torch.rand(size=[nDim, nPoints])
-        
+    
+    def flatten_var(self,act):
+        return torch.concat((act[:,0],act[:,1]),0).squeeze()
+    
     def stack_var(self, z):
         return torch.stack((z[:self.N_Technologies], z[self.N_Technologies:]), dim=1).squeeze()
 
@@ -141,17 +148,24 @@ class TorchGame():
         # lim = 75
         # barrier = 15 * (torch.log(lim - act_n) - 5 * torch.log(torch.tensor([lim])))
         exp_act = torch.exp(act_n)# + barrier
-        act_norm = self.Players_action_length * exp_act / torch.sum(exp_act, dim=0)
+        act_norm = (self.Players_action_length / torch.sum(exp_act, dim=0)) * exp_act
         return act_norm
 
-    def Update_State(self, State, Action):
+    def Update_State(self, State, Action, override_stochastic = None | bool):
 
         with torch.no_grad():
-
+           
             if self.Stochastic_state_update:
                 xi = self.stack_var(torch.exp((torch.normal(mean = self.xi_params_mu, std = self.xi_params_sigma))))
             else:
                 xi = 1
+            
+            if override_stochastic is not None:
+                if override_stochastic:
+                    xi = self.stack_var(torch.exp((torch.normal(mean = self.xi_params_mu, std = self.xi_params_sigma))))
+                else:
+                    xi = 1
+                    
 
         UpdateValue = self.normAction(Action) * xi
         assert ~torch.any(torch.isnan(UpdateValue))
@@ -163,9 +177,12 @@ class TorchGame():
 
     def TechnologyReadiness(self,State):
         
-        trl = torch.pow(1+torch.exp(-State / self.I + self.D), -1) +\
-               torch.pow(1+torch.exp(-State / self.I + 3 * self.D), -1)
+        # trl_old = torch.pow(1+torch.exp(-State / self.I + self.D), -1) +\
+        #        torch.pow(1+torch.exp(-State / self.I + 3 * self.D), -1)
 
+        trl = (1 / (1 + ((-State / self.I) + self.D).exp()) ) + (1 / (1 + ((-State / self.I) + 3 * self.D).exp()))
+
+        # assert torch.allclose(trl_old, trl)
         
         return trl
 
@@ -548,6 +565,10 @@ class TorchGame():
         convergence_hist = [False] * 7
         iteration = 0
 
+        # sc = scoringFun(z_n)
+        # compgraph = torchviz.make_dot(var = sc)
+        # compgraph.render(directory="figures", format="png", view=True)
+        
         winprobs = []
         grad_norms = []
         step_norms = []
@@ -742,9 +763,12 @@ class TorchGame():
         actions = (centers @ V.T).T #reverse projection of center points frim k-means
         acts = []
         for a in range(n_acts):
-            acts.append(actions[:, a])
+            norm_act = self.normAction(actions[:,a])
+            flat =  self.flatten_var(norm_act)
+            acts.append(flat)
         print(f"Number of actions taken after filtration: {n_acts}")
 
+        
         return acts
 
     def GetActionsMP(self, State):
@@ -818,7 +842,7 @@ class TorchGame():
             for a in act:
                 st_new = self.Update_State(st,a) #the resulting states of traversing along the nash equilibrium
                 node_id += 1
-                self.History.add_data(node_id, parent_node_id, t+1, st_new.numpy(), a.numpy(), 0)
+                self.History.add_data(node_id, parent_node_id, t+1, self.flatten_var(st_new).numpy(), a.numpy(), 0)
 
                 if t+1 < self.Horizon:
                     self.Q.append((st_new,t+1, node_id))
@@ -834,10 +858,11 @@ if __name__ == "__main__":
          "DEVICE": "cpu", "MultiProcess": False
     }
     params_test = {
-        "Horizon": 3, "Max_actions_chosen": 2, "N_actions_startpoint": 8, "I": .5, "D": 5,
-        "Players_action_length": [5, 5], "Max_optim_iter": 75, "Filter_actions": True,
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 8,
+        "Horizon": 3, "Max_actions_chosen": 5, "N_actions_startpoint": 100, "I": .5, "D": 5,
+        "Players_action_length": [5, 5], "Max_optim_iter": 128, "Filter_actions": True,
+        "Stochastic_state_update": False, "base_params": "paper", "NumRepsBattle": 12,
         "DEVICE": "cpu", "MultiProcess": True
+        
     }
     params = params_test
     FullGame = TorchGame(**params)
