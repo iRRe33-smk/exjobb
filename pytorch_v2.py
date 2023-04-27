@@ -248,16 +248,16 @@ class TorchGame():
 
     def ThetaToOffProb(self, theta):
         # TODO : verify Parameter offensive probability
-        d = 5
-        i = .5
+        d = 0
+        i = 5
 
         p = torch.pow(1 + torch.exp(-theta / i + d), -1)
         return p
 
     def ThetaToDefProb(self, theta):
         # TODO: verify parameter defensive probability
-        d = 5
-        i = .5
+        d = 0
+        i = 5
 
         p = torch.pow(1 + torch.exp(-theta / i + d), -1)
         return p
@@ -924,8 +924,11 @@ if __name__ == "__main__":
         "Players_action_length": [5, 5], "Max_optim_iter": 128, "Filter_actions": True,
         "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 12,
         "DEVICE": "cpu", "MultiProcess": False
-
     }
+    combitech = {
+        "Horizon": 5, "Max_actions_chosen": 5, "N_actions_startpoint": 15*5, "I": 0.5, 
+        "D": 5, "Players_action_length": [5, 5], "Max_optim_iter": 125, "Filter_actions": True, 
+        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 32, "DEVICE": "cpu", "MultiProcess": True}
     params = params_test
     FullGame = TorchGame(**params)
 
