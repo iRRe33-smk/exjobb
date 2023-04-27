@@ -1,18 +1,16 @@
 import torch
-from torch.autograd.functional import jacobian, hessian, hvp, vhp
+# from torch import tensor
+from torch.autograd.functional import jacobian, hessian
 from torch import multiprocessing as tmp
-from torch.utils.data import DataLoader, Dataset, TensorDataset
-# from functorch import jvp, vmap
-# from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
-import numpy as np
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 import time, math, json, os, random, string, multiprocessing as mp
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from sklearn.preprocessing import StandardScaler
-# from matplotlib import pyplot as plt
 from classes.history import History
+from classes.Normal import Normal
+from typing import *
 
 
 class RandomDataSet(Dataset):
@@ -54,19 +52,23 @@ class PseudoDistr():
 
     def sample(self, unused=None):
         # return torch.stack([self.loc]*num[0],0)
-        return torch.tensor([self.loc])
+        return torch.tensor([self.loc], device=self.loc.device)
+    
+    def rsample(self, unused=None):
+        return torch.tensor([self.loc], device=self.loc.device)
 
     def cdf(self, val: torch.tensor):
         return torch.tensor([1.0])
 
 
 class TorchGame():
+    
     def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
                  Players_action_length=[10, 10], I=.5, D=5, omega=.1, Stochastic_state_update=True,
                  Max_optim_iter=50, Filter_actions=True, base_params="paper",
                  NumRepsBattle=8, DEVICE="cpu", MultiProcess=False) -> None:
-        self.DEVICE = DEVICE
-
+        # super().__init__()
+        self.DEVICE = torch.device(DEVICE)
         self.Horizon = Horizon
         self.N_actions_startpoint = torch.tensor(N_actions_startpoint, device=self.DEVICE)
         self.Max_actions_chosen = Max_actions_chosen
@@ -166,6 +168,7 @@ class TorchGame():
         nDim = self.N_Technologies
         return torch.rand(size=[nDim, nPoints])
 
+
     def flatten_var(self, act):
         return torch.concat((act[:, 0], act[:, 1]), 0).squeeze()
 
@@ -174,27 +177,25 @@ class TorchGame():
 
     def normAction(self, z):
         act_n = self.stack_var(torch.clamp(z, min=-10, max=25))
-        # lim = 75
-        # barrier = 15 * (torch.log(lim - act_n) - 5 * torch.log(torch.tensor([lim])))
         exp_act = torch.exp(act_n)  # + barrier
         act_norm = self.Players_action_length * exp_act / torch.sum(exp_act, dim=0)
         return act_norm
-
+    
     def Update_State(self, State, Action, override_stochastic=None):
 
-        with torch.no_grad():
+        # with torch.no_grad():
 
-            if self.Stochastic_state_update:
-                xi = self.xi_dist.rsample([2]).T
-            else:
-                xi = 1
+        #     if self.Stochastic_state_update:
+        #         xi = self.xi_dist.rsample([2]).T
+        #     else:
+        #         xi = 1
 
-            if override_stochastic is not None:
-                if override_stochastic:
-                    xi = self.xi_dist.rsample([2]).T
-                else:
-                    xi = 1
-
+        #     if override_stochastic is not None:
+        #         if override_stochastic:
+        #             xi = self.xi_dist.rsample([2]).T
+        #         else:
+                    # xi = 1
+        xi = self.xi_dist.rsample([2]).T
         UpdateValue = self.normAction(Action) * xi
         assert ~torch.any(torch.isnan(UpdateValue))
 
@@ -203,19 +204,21 @@ class TorchGame():
 
         return newState
 
+   
     def TechnologyReadiness(self, State):
 
-        trl = torch.pow(1 + torch.exp(-State / self.I + self.D), -1) + \
-              torch.pow(1 + torch.exp(-State / self.I + 3 * self.D), -1)
+        # trl = torch.pow(1 + torch.exp(-State / self.I + self.D), -1) + \
+        #       torch.pow(1 + torch.exp(-State / self.I + 3 * self.D), -1)
 
         trl = (1 / (1 + ((-State / self.I) + self.D).exp())) + (1 / (1 + ((-State / self.I) + 3 * self.D).exp()))
 
         # assert torch.allclose(trl_old, trl)
 
         return trl
+    
 
     def techToParams(self, State):
-
+        
         trl = self.TechnologyReadiness(State)
         assert ~torch.any(torch.isnan(trl))
 
@@ -246,22 +249,6 @@ class TorchGame():
 
         return torch.stack([p1_favoured, neither_favoured, p2_favoured], dim=0)
 
-    def ThetaToOffProb(self, theta):
-        # TODO : verify Parameter offensive probability
-        d = 5
-        i = .5
-
-        p = torch.pow(1 + torch.exp(-theta / i + d), -1)
-        return p
-
-    def ThetaToDefProb(self, theta):
-        # TODO: verify parameter defensive probability
-        d = 5
-        i = .5
-
-        p = torch.pow(1 + torch.exp(-theta / i + d), -1)
-        return p
-
     def SalvoBattleStochasticWrapper(self, theta: torch.tensor):
         # TODO: Distribution of remaining units have to be taken into account. Monte carlo?
         initiativeProbabilities = self.InitiativeProbabilities(theta[1, 0], theta[1, 1])
@@ -280,7 +267,25 @@ class TorchGame():
 
         return weighted_prob
 
-    def SalvoBattleSequential(self, theta: torch.tensor, survival_threshold=0.20):
+
+    #  def ThetaToOffProb(self, theta:torch.Tensor) -> torch.Tensor:
+        # # TODO : verify Parameter offensive probability
+        # d = 1
+        # i = 5
+
+        # p = torch.pow(1 + torch.exp(-theta / i + d), -1)
+        # return p
+
+    # def ThetaToDefProb(self, theta:torch.Tensor) -> torch.Tensor:
+        #     # TODO: verify parameter defensive probability
+        #     d = 0
+        #     i = 5
+
+        #     p = torch.pow(1 + torch.exp(-theta / i + d), -1)
+        #     return p
+    
+
+    def SalvoBattleSequential(self, theta: torch.tensor):
 
         def flipTheta(theta):
             return torch.stack((theta[:, 1], theta[:, 0]), dim=1)
@@ -292,11 +297,16 @@ class TorchGame():
         A_n_distr = PseudoDistr(theta[0, 0])
         B_n_distr = PseudoDistr(theta[0, 1])
 
-        A_sample = A_n_distr.sample().to(device=self.DEVICE)
-        B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_sample,
-                                                               B_n_distr.sample().to(device=self.DEVICE))
-        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta),
-                                                               B_n_distr.sample().to(device=self.DEVICE), A_sample)
+        A_sample = A_n_distr.rsample([1])
+        B_n_distr, p_B_lives, B_dead = self.getActualDefenders(params= theta,
+                                                               A0= A_sample,
+                                                               B0= B_n_distr.rsample([1]),
+                                                               device= self.DEVICE)
+        
+        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(params= flipTheta(theta),
+                                                               A0= B_n_distr.rsample([1]), 
+                                                               B0= A_sample,
+                                                               device= self.DEVICE)
         prob = p_A_lives
         results[0] = prob
 
@@ -304,9 +314,12 @@ class TorchGame():
         A_n_distr = PseudoDistr(theta[0, 0])
         B_n_distr = PseudoDistr(theta[0, 1])
 
-        B_sample = B_n_distr.sample().to(device=self.DEVICE)
-        A_sample = A_n_distr.sample().to(device=self.DEVICE)
-        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta), B_sample, A_sample)
+        B_sample = B_n_distr.rsample([1])
+        A_sample = A_n_distr.rsample([1])
+        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(params= flipTheta(theta), 
+                                                               A0=B_sample, 
+                                                               B0=A_sample, 
+                                                               device=self.DEVICE)
         # B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_sample,  B_sample)
         prob = p_A_lives
         results[1] = prob
@@ -315,9 +328,12 @@ class TorchGame():
         A_n_distr = PseudoDistr(theta[0, 0])
         B_n_distr = PseudoDistr(theta[0, 1])
 
-        B_sample = B_n_distr.sample().to(device=self.DEVICE)
-        A_sample = A_n_distr.sample().to(device=self.DEVICE)
-        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta), B_sample, A_sample)
+        B_sample = B_n_distr.rsample([1])
+        A_sample = A_n_distr.rsample([1])
+        A_n_distr, p_A_lives, A_dead = self.getActualDefenders(params= flipTheta(theta),
+                                                               A0 = B_sample,
+                                                               B0=A_sample,
+                                                               device=self.DEVICE)
         # B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_n_distr.sample(), B_sample)
         prob = p_A_lives
         results[2] = prob
@@ -325,51 +341,55 @@ class TorchGame():
         weighted_results = torch.sum(results * initiativeProbabilities)
         return weighted_results
 
-
-    def getActualDefenders(self, theta: torch.tensor, A0, B0):
-
+    def getActualDefenders(self, params: torch.Tensor, A0: torch.Tensor, B0: torch.Tensor, device : torch.device) -> Tuple[Normal, torch.Tensor, bool]:
+       
+        # TODO : verify Parameter offensive probability
+        d_off = 0
+        i_off = 5
+        p_off = torch.pow(1 + torch.exp(-params[3,0] / i_off + d_off), -1)
+        
+        d_def = 0
+        i_def = 5
+        p_def = torch.pow(1 + torch.exp(-params[5,1] / i_def + d_def), -1)
+    
+        zero = torch.tensor([0.0], device=device)
+        
+        # #TODO: att check outside function
         if (A0 < 0 or B0 < 0):
             #  B1_actual_distr, prob_B_lives, False
-            return torch.distributions.Normal(0.0, 0.01), 0.0, True
+            return Normal(zero, torch.tensor([.01],device=device)), zero, True
 
-        A_offNum = theta[2, 0]
-
-        # d = 5
-        # i = .5
-        # A_offProb = torch.pow(1 + torch.exp(-theta / i + d), -1)
-        A_offProb = self.ThetaToOffProb(theta[3, 0])
+        A_offNum = params[2, 0]
+        # A_offProb = ThetaToOffProb(params[3, 0])
+        A_offProb = p_off
         A_offPower = A_offNum * A_offProb
-        A_attack = theta[6, 0]
+        A_attack = params[6, 0]
 
-        B_defNum = theta[4, 1]
-
-        # d = 5
-        # i = .5
-        # B_defProb = torch.pow(1 + torch.exp(-theta / i + d), -1)
-        B_defProb = self.ThetaToDefProb(theta[5, 1])
+        B_defNum = params[4, 1]
+        # B_defProb = ThetaToDefProb(params[5, 1])
+        B_defProb = p_def
         B_defPower = B_defNum * B_defProb
-        B_stay = theta[7, 1]
+        B_stay = params[7, 1]
 
         mu_damage_AB = A_attack / B_stay
-        sigma_damage_AB = torch.tensor(1 / 3, device=self.DEVICE)
+        sigma_damage_AB = torch.tensor(1 / 3, device=device)
 
         mean_net_AB = A0 * A_offPower - B0 * B_defPower
         var_net_AB = A0 * A_offPower * (1 - A_offProb) + B0 * B_defPower * (1 - B_defProb)
-        AB_net_distr = torch.distributions.Normal(
+        AB_net_distr = Normal(
             loc=mean_net_AB,
-            scale=torch.sqrt(var_net_AB),
-            validate_args=False
+            scale=torch.sqrt(var_net_AB)
+
         )
 
         mean_nominal_B = B0 - mean_net_AB * mu_damage_AB
         var_nominal_B = mean_net_AB * sigma_damage_AB ** 2 + var_net_AB * mu_damage_AB ** 2 - \
-                        2 * sigma_damage_AB ** 2 * mean_net_AB * AB_net_distr.cdf(0.0) + \
-                        2 * sigma_damage_AB ** 2 * var_net_AB * torch.exp(AB_net_distr.log_prob(0.0))
+                        2 * sigma_damage_AB ** 2 * mean_net_AB * AB_net_distr.cdf(zero) + \
+                        2 * sigma_damage_AB ** 2 * var_net_AB * torch.exp(AB_net_distr.log_prob(zero))
 
-        B1_nominal_distr = torch.distributions.Normal(
+        B1_nominal_distr = Normal(
             loc=mean_nominal_B,
-            scale=torch.sqrt(var_nominal_B),
-            validate_args=False
+            scale=torch.sqrt(var_nominal_B)
         )
 
         mean_actual_B = mean_nominal_B * (
@@ -394,150 +414,149 @@ class TorchGame():
             assert var_actual_B > -1E-10
             var_actual_B = torch.clamp(var_actual_B, min=0.01)
 
-        B1_actual_distr = torch.distributions.Normal(
+        B1_actual_distr = Normal(
             loc=mean_actual_B,
-            scale=torch.sqrt(var_actual_B),
-            validate_args=False
+            scale=torch.sqrt(var_actual_B)
         )
 
         prob_B_lives = (1 - B1_nominal_distr.cdf(mu_damage_AB / 2))
         return B1_actual_distr, prob_B_lives, False
 
-    def SalvoBattleStochastic(self, theta: torch.tensor, A0, B0):
-        # stochastistc salvo
+    # def SalvoBattleStochastic(self, theta: torch.tensor, A0, B0):
+    #     # stochastistc salvo
 
-        A_offNum = theta[2, 0]
-        A_offProb = self.ThetaToOffProb(theta[3, 0])
-        A_offPower = A_offNum * A_offProb
-        A_defProb = self.ThetaToOffProb(theta[3, 0])
-        A_defPower = theta[4, 0] * self.ThetaToDefProb(theta[5, 0])
-        A_attack = theta[6, 0]
-        A_stay = theta[7, 0]
+    #     A_offNum = theta[2, 0]
+    #     A_offProb = self.ThetaToOffProb(theta[3, 0])
+    #     A_offPower = A_offNum * A_offProb
+    #     A_defProb = self.ThetaToOffProb(theta[3, 0])
+    #     A_defPower = theta[4, 0] * self.ThetaToDefProb(theta[5, 0])
+    #     A_attack = theta[6, 0]
+    #     A_stay = theta[7, 0]
 
-        B_offNum = theta[2, 1]
-        B_offProb = self.ThetaToOffProb(theta[3, 1])
-        B_offPower = B_offNum * B_offProb
-        B_defNum = theta[4, 1]
-        B_defProb = self.ThetaToDefProb(theta[5, 1])
-        B_defPower = B_defNum * B_defProb
-        B_attack = theta[6, 1]
-        B_stay = theta[7, 1]
+    #     B_offNum = theta[2, 1]
+    #     B_offProb = self.ThetaToOffProb(theta[3, 1])
+    #     B_offPower = B_offNum * B_offProb
+    #     B_defNum = theta[4, 1]
+    #     B_defProb = self.ThetaToDefProb(theta[5, 1])
+    #     B_defPower = B_defNum * B_defProb
+    #     B_attack = theta[6, 1]
+    #     B_stay = theta[7, 1]
 
-        mu_damage_AB = A_attack / B_stay
-        sigma_damage_AB = .5
+    #     mu_damage_AB = A_attack / B_stay
+    #     sigma_damage_AB = .5
 
-        mu_damage_BA = B_attack / A_stay
-        sigma_damage_BA = .5
+    #     mu_damage_BA = B_attack / A_stay
+    #     sigma_damage_BA = .5
 
-        # Distribution of number of missile hits
+    #     # Distribution of number of missile hits
 
-        mean_net_AB = A0 * A_offPower - B0 * B_defPower
-        var_net_AB = A0 * A_offPower * (1 - A_offProb) + B0 * B_defPower * (1 - B_defProb)
-        AB_net_distr = torch.distributions.Normal(
-            loc=mean_net_AB,
-            scale=torch.sqrt(var_net_AB)
-        )
+    #     mean_net_AB = A0 * A_offPower - B0 * B_defPower
+    #     var_net_AB = A0 * A_offPower * (1 - A_offProb) + B0 * B_defPower * (1 - B_defProb)
+    #     AB_net_distr = torch.distributions.Normal(
+    #         loc=mean_net_AB,
+    #         scale=torch.sqrt(var_net_AB)
+    #     )
 
-        mean_net_BA = B0 * B_offPower - A0 * A_defPower
-        var_net_BA = B0 * B_offPower * (1 - B_offProb) + A0 * A_defPower * (1 - A_defProb)
-        BA_net_distr = torch.distributions.Normal(
-            loc=mean_net_BA,
-            scale=torch.sqrt(var_net_BA)
-        )
+    #     mean_net_BA = B0 * B_offPower - A0 * A_defPower
+    #     var_net_BA = B0 * B_offPower * (1 - B_offProb) + A0 * A_defPower * (1 - A_defProb)
+    #     BA_net_distr = torch.distributions.Normal(
+    #         loc=mean_net_BA,
+    #         scale=torch.sqrt(var_net_BA)
+    #     )
 
-        # Nominal distribution of surving units
-        mean_nominal_B = B0 - mean_net_AB * mu_damage_AB
-        var_nominal_B = mean_net_AB * sigma_damage_AB + var_net_AB * mu_damage_AB ** 2 - \
-                        2 * sigma_damage_AB ** 2 * mean_net_AB * AB_net_distr.cdf(torch.tensor([0.0])) + \
-                        2 * sigma_damage_AB ** 2 * var_net_AB * torch.exp(AB_net_distr.log_prob(torch.tensor([0.0])))
+    #     # Nominal distribution of surving units
+    #     mean_nominal_B = B0 - mean_net_AB * mu_damage_AB
+    #     var_nominal_B = mean_net_AB * sigma_damage_AB + var_net_AB * mu_damage_AB ** 2 - \
+    #                     2 * sigma_damage_AB ** 2 * mean_net_AB * AB_net_distr.cdf(torch.tensor(zero)) + \
+    #                     2 * sigma_damage_AB ** 2 * var_net_AB * torch.exp(AB_net_distr.log_prob(torch.tensor(zero)))
 
-        B1_nominal_distr = torch.distributions.Normal(
-            loc=mean_nominal_B,
-            scale=torch.sqrt(var_nominal_B)
-        )
+    #     B1_nominal_distr = torch.distributions.Normal(
+    #         loc=mean_nominal_B,
+    #         scale=torch.sqrt(var_nominal_B)
+    #     )
 
-        mean_nominal_A = A0 - mean_net_BA * mu_damage_BA
-        var_nominal_A = mean_net_BA * sigma_damage_BA + var_net_BA * mu_damage_BA ** 2 - \
-                        2 * sigma_damage_AB ** 2 * mean_net_BA * BA_net_distr.cdf(torch.tensor([0.0])) + \
-                        2 * sigma_damage_BA ** 2 * var_net_BA * torch.exp(BA_net_distr.log_prob(torch.tensor([0.0])))
-        A1_nominal_distr = torch.distributions.Normal(
-            loc=mean_nominal_A,
-            scale=torch.sqrt(var_nominal_A)
-        )
+    #     mean_nominal_A = A0 - mean_net_BA * mu_damage_BA
+    #     var_nominal_A = mean_net_BA * sigma_damage_BA + var_net_BA * mu_damage_BA ** 2 - \
+    #                     2 * sigma_damage_AB ** 2 * mean_net_BA * BA_net_distr.cdf(torch.tensor(zero)) + \
+    #                     2 * sigma_damage_BA ** 2 * var_net_BA * torch.exp(BA_net_distr.log_prob(torch.tensor(zero)))
+    #     A1_nominal_distr = torch.distributions.Normal(
+    #         loc=mean_nominal_A,
+    #         scale=torch.sqrt(var_nominal_A)
+    #     )
 
-        Prob_A_lives = (1 - A1_nominal_distr.cdf(mu_damage_AB / 2))
-        Prob_B_lives = (1 - B1_nominal_distr.cdf(mu_damage_BA / 2))
+    #     Prob_A_lives = (1 - A1_nominal_distr.cdf(mu_damage_AB / 2))
+    #     Prob_B_lives = (1 - B1_nominal_distr.cdf(mu_damage_BA / 2))
 
-        # We assume playerA only seeks to deny opponent full control of area
-        # PlayerB seeks full control
-        # Swedish military doctrine seeks to delay the opponent and survive until mobilisation of nato asssets.
-        Prob_B_control = (1 - Prob_A_lives) * Prob_B_lives
+    #     # We assume playerA only seeks to deny opponent full control of area
+    #     # PlayerB seeks full control
+    #     # Swedish military doctrine seeks to delay the opponent and survive until mobilisation of nato asssets.
+    #     Prob_B_control = (1 - Prob_A_lives) * Prob_B_lives
 
-        # probability of other outcomes
-        Prob_A_control = Prob_A_lives * (1 - Prob_B_lives)
-        Prob_stalemate = Prob_A_lives * Prob_B_lives
-        Prob_destruction = (1 - Prob_A_lives) * (1 - Prob_B_lives)
+    #     # probability of other outcomes
+    #     Prob_A_control = Prob_A_lives * (1 - Prob_B_lives)
+    #     Prob_stalemate = Prob_A_lives * Prob_B_lives
+    #     Prob_destruction = (1 - Prob_A_lives) * (1 - Prob_B_lives)
 
-        return Prob_A_control + Prob_stalemate * .5, A1_nominal_distr, B1_nominal_distr
+    #     return Prob_A_control + Prob_stalemate * .5, A1_nominal_distr, B1_nominal_distr
 
-        # Full calculations for reference
-        # Prob_A_control = (1 - A1_nominal_distr.cdf(mu_damage_AB/2)) * B1_nominal_distr.cdf(mu_damage_BA/2)
-        # Prob_B_control = A1_nominal_distr.cdf(mu_damage_BA / 2) * (1 - B1_nominal_distr.cdf(mu_damage_AB / 2))
-        # prob_stalemate = (1 - A1_nominal_distr.cdf(mu_damage_AB/2)) * (1- B1_nominal_distr.cdf(mu_damage_BA/2))
-        # prob_destruction = (A1_nominal_distr.cdf(mu_damage_AB/2)) * B1_nominal_distr.cdf(mu_damage_BA/2)
+    #     # Full calculations for reference
+    #     # Prob_A_control = (1 - A1_nominal_distr.cdf(mu_damage_AB/2)) * B1_nominal_distr.cdf(mu_damage_BA/2)
+    #     # Prob_B_control = A1_nominal_distr.cdf(mu_damage_BA / 2) * (1 - B1_nominal_distr.cdf(mu_damage_AB / 2))
+    #     # prob_stalemate = (1 - A1_nominal_distr.cdf(mu_damage_AB/2)) * (1- B1_nominal_distr.cdf(mu_damage_BA/2))
+    #     # prob_destruction = (A1_nominal_distr.cdf(mu_damage_AB/2)) * B1_nominal_distr.cdf(mu_damage_BA/2)
 
-        # return 1 - Prob_B_control, A1_nominal_distr, B1_nominal_distr
+    #     # return 1 - Prob_B_control, A1_nominal_distr, B1_nominal_distr
 
-    def SalvoBattleDeterministic(self, theta: torch.tensor):
-        # DeterministicSalvo
-        # print(theta.requires_grad)
-        theta = torch.transpose(theta, 0, -1)
+    # def SalvoBattleDeterministic(self, theta: torch.tensor):
+    #     # DeterministicSalvo
+    #     # print(theta.requires_grad)
+    #     theta = torch.transpose(theta, 0, -1)
 
-        def getDeltaN(p1, p1_offPower, p1_attack, p2, p2_defPower, p2_stay):
-            deltaP2 = (p1 * p1_offPower - p2 * p2_defPower) * (p1_attack / p2_stay)
-            return deltaP2
+    #     def getDeltaN(p1, p1_offPower, p1_attack, p2, p2_defPower, p2_stay):
+    #         deltaP2 = (p1 * p1_offPower - p2 * p2_defPower) * (p1_attack / p2_stay)
+    #         return deltaP2
 
-        # numDraws = 1000
-        # wins = [0,0]
+    #     # numDraws = 1000
+    #     # wins = [0,0]
 
-        InitiativeProbs = self.InitiativeProbabilities(
-            theta[1, 0], theta[1, 1])
+    #     InitiativeProbs = self.InitiativeProbabilities(
+    #         theta[1, 0], theta[1, 1])
 
-        # Unpacking parameters
+    #     # Unpacking parameters
 
-        A0 = theta[0, 0]
-        A_offPower = theta[2, 0] * self.ThetaToOffProb(theta[3, 0])
-        A_defPower = theta[4, 0] * self.ThetaToDefProb(theta[5, 0])
-        A_attack = theta[6, 0]
-        A_stay = theta[7, 0]
+    #     A0 = theta[0, 0]
+    #     A_offPower = theta[2, 0] * self.ThetaToOffProb(theta[3, 0])
+    #     A_defPower = theta[4, 0] * self.ThetaToDefProb(theta[5, 0])
+    #     A_attack = theta[6, 0]
+    #     A_stay = theta[7, 0]
 
-        B0 = theta[0, 1]
-        B_offPower = theta[2, 1] * self.ThetaToOffProb(theta[3, 1])
-        B_defPower = theta[4, 1] * self.ThetaToDefProb(theta[5, 1])
-        B_attack = theta[6, 0]
-        B_stay = theta[7, 0]
+    #     B0 = theta[0, 1]
+    #     B_offPower = theta[2, 1] * self.ThetaToOffProb(theta[3, 1])
+    #     B_defPower = theta[4, 1] * self.ThetaToDefProb(theta[5, 1])
+    #     B_attack = theta[6, 0]
+    #     B_stay = theta[7, 0]
 
-        # A attacks first
-        deltaB = getDeltaN(A0, A_offPower, A_attack, B0, B_defPower, B_stay)
-        deltaA = getDeltaN(B0 - deltaB, B_offPower, B_attack,
-                           A0, A_defPower, A_stay)
-        FER1 = (deltaB / B0) / (deltaA / A0)  # b-losses over a-losses
+    #     # A attacks first
+    #     deltaB = getDeltaN(A0, A_offPower, A_attack, B0, B_defPower, B_stay)
+    #     deltaA = getDeltaN(B0 - deltaB, B_offPower, B_attack,
+    #                        A0, A_defPower, A_stay)
+    #     FER1 = (deltaB / B0) / (deltaA / A0)  # b-losses over a-losses
 
-        # Simultanous fire
-        deltaB = getDeltaN(A0, A_offPower, A_attack, B0, B_defPower, B_stay)
-        deltaA = getDeltaN(B0, B_offPower, B_attack, A0, A_defPower, A_stay)
-        FER2 = (deltaB / B0) / (deltaA / A0)  # b-losses over a-losses
+    #     # Simultanous fire
+    #     deltaB = getDeltaN(A0, A_offPower, A_attack, B0, B_defPower, B_stay)
+    #     deltaA = getDeltaN(B0, B_offPower, B_attack, A0, A_defPower, A_stay)
+    #     FER2 = (deltaB / B0) / (deltaA / A0)  # b-losses over a-losses
 
-        # B attacks first
-        deltaB = getDeltaN(A0, A_offPower, A_attack, B0, B_defPower, B_stay)
-        deltaA = getDeltaN(B0, B_offPower, B_attack, A0, A_defPower, A_stay)
-        FER3 = (deltaB / B0) / (deltaA / A0)  # b-losses over a-losses
+    #     # B attacks first
+    #     deltaB = getDeltaN(A0, A_offPower, A_attack, B0, B_defPower, B_stay)
+    #     deltaA = getDeltaN(B0, B_offPower, B_attack, A0, A_defPower, A_stay)
+    #     FER3 = (deltaB / B0) / (deltaA / A0)  # b-losses over a-losses
 
-        p1_WinProb = FER1 * InitiativeProbs[0] + FER2 * \
-                     InitiativeProbs[1] + FER3 * InitiativeProbs[2]
-        # print(p1_WinProb)
-        # returnVal = p1_WinProb * torch.tensor([1,1/p1_WinProb -1],requires_grad=True)
-        return p1_WinProb
+    #     p1_WinProb = FER1 * InitiativeProbs[0] + FER2 * \
+    #                  InitiativeProbs[1] + FER3 * InitiativeProbs[2]
+    #     # print(p1_WinProb)
+    #     # returnVal = p1_WinProb * torch.tensor([1,1/p1_WinProb -1],requires_grad=True)
+    #     return p1_WinProb
 
     def OptimizeActionIT(self, State, budget, num_acts, num_reps):
         DS = RandomDataSet(self.N_Technologies, num_acts, budget)
@@ -556,11 +575,7 @@ class TorchGame():
 
         assert ~torch.all(Action == 0)
         assert ~torch.all(State == 0)
-
-        # theta_0 = self.techToParams(stat_0)
-        # winprob_0 = self.SalvoBattleSequential(theta_0)
-        # print(theta_0)
-
+       
         def scoringFun(z):
 
             score = 0
@@ -607,10 +622,6 @@ class TorchGame():
 
         }
 
-        # block matrix [[+1,+1],
-        #               [-1,-1]]
-
-        # Hyperparmeters LSS
 
         def LR_sched(it, max=500, div=50, add=100):
             return torch.tensor(max / (math.exp((it + 1) / div)) + add)
@@ -713,7 +724,52 @@ class TorchGame():
             final_action = None
 
         return final_action
+    
+    
+ 
+    
+    def iterateAction(self, state, z_n, L, gamma1, gamma2, scoringFun, params_jacobian, params_hessian):
+        grad_flipper = torch.tensor(
+            [1.0 if i < self.N_Technologies else -1.0 for i in range(self.N_Technologies * 2)],
+            device=self.DEVICE).unsqueeze(dim=-1)
 
+        hess_flipper = torch.zeros(size=(self.N_Technologies * 2, self.N_Technologies * 2), device=self.DEVICE)
+        hess_flipper[0:self.N_Technologies, :] = 1.0
+        hess_flipper[self.N_Technologies:, :] = -1.0
+        
+        
+        jac_z = jacobian(scoringFun, z_n, **params_jacobian)
+
+
+        hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), **params_hessian)
+        hess_nu = hess @ nu_n
+
+        omega = jac_z * grad_flipper
+        L_val = L(xi_1, omega)
+        fun_nu = lambda nu_n: torch.norm(hess_nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
+        jac_nu = jacobian(fun_nu, nu_n, **params_jacobian)
+
+        g_x = jac_z[:self.N_Technologies] + hess_nu[:self.N_Technologies]
+        g_y = - jac_z[self.N_Technologies:] - hess_nu[self.N_Technologies:]
+        g_nu = jac_nu
+
+        gamma1 = LR_sched(iteration)
+        z_step = torch.cat((gamma1 * g_x, gamma1 * g_y), dim=0)
+        z_step = torch.clamp(z_step, min=-5, max=10)
+        z_n += z_step  # .unsqueeze(dim = 1)
+        # step_norms.append(torch.norm(z_step, p=2))
+
+        nu_step = gamma2 * g_nu
+        nu_n += nu_step
+
+        check1 = torch.max(torch.abs(omega))
+        check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
+        # print(f"it: {iteration}, max(Omega): {check1}, norm(z_step): {check2} \n")
+        # print(f"norm(nu): {check2}")
+        convergence_hist.pop(0)
+        convergence_hist.append(
+            check1 < 1E-3 and torch.all(check2 < 5E-1) and iteration > 10
+        )
     # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
     def FilterActions(self, Actions, q_max=8, share_of_variance=.8):
 
@@ -830,7 +886,7 @@ class TorchGame():
                         in range(self.N_actions_startpoint)]
         if self.DEVICE == "cpu":
 
-            processes = 15
+            processes = 5
             p = mp.pool.Pool(processes)
             chunksize = int(self.N_actions_startpoint / processes)
             with p as pool:
@@ -909,7 +965,6 @@ class TorchGame():
         pbar.close()
         return self.History
 
-
 if __name__ == "__main__":
 
     params_medium = {
@@ -920,9 +975,9 @@ if __name__ == "__main__":
     }
 
     params_test = {
-        "Horizon": 3, "Max_actions_chosen": 5, "N_actions_startpoint": 32, "I": .5, "D": 5,
+        "Horizon": 3, "Max_actions_chosen": 5, "N_actions_startpoint": 30, "I": .5, "D": 5,
         "Players_action_length": [5, 5], "Max_optim_iter": 128, "Filter_actions": True,
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 12,
+        "Stochastic_state_update": True, "base_params": "custom", "NumRepsBattle": 12,
         "DEVICE": "cpu", "MultiProcess": False
 
     }
@@ -931,4 +986,5 @@ if __name__ == "__main__":
 
     hist = FullGame.Run()
     hist.save_to_file_2(params)
+
     hist.send_email(test=False)
