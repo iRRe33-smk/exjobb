@@ -6,8 +6,9 @@ ipykernel
 pandas
 openpyxl
 scikit-learn
-treelib
-networkx
+# treelib
+# networkx
 fastparquet
 tqdm
-torchviz
+# torchviz
+pefile
