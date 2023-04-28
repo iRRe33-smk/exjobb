@@ -1,0 +1,1 @@
+{"Horizon": 3, "Max_actions_chosen": 3, "N_actions_startpoint": 10, "I": 0.5, "D": 5, "Players_action_length": [5, 5], "Max_optim_iter": 128, "Filter_actions": true, "Stochastic_state_update": false, "base_params": "paper", "NumRepsBattle": 12, "DEVICE": "cpu", "MultiProcess": false}
