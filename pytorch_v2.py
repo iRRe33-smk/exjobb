@@ -56,6 +56,9 @@ class PseudoDistr():
         # return torch.stack([self.loc]*num[0],0)
         return torch.tensor([self.loc])
 
+    def rsample(self, unused=None):
+        return torch.tensor([self.loc])
+    
     def cdf(self, val: torch.tensor):
         return torch.tensor([1.0])
 
@@ -280,7 +283,7 @@ class TorchGame():
 
         return weighted_prob
 
-    def SalvoBattleSequential(self, theta: torch.tensor, survival_threshold=0.20):
+    def SalvoBattleSequential(self, theta: torch.tensor):
 
         def flipTheta(theta):
             return torch.stack((theta[:, 1], theta[:, 0]), dim=1)
@@ -292,11 +295,11 @@ class TorchGame():
         A_n_distr = PseudoDistr(theta[0, 0])
         B_n_distr = PseudoDistr(theta[0, 1])
 
-        A_sample = A_n_distr.sample().to(device=self.DEVICE)
+        A_sample = A_n_distr.rsample().to(device=self.DEVICE)
         B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_sample,
-                                                               B_n_distr.sample().to(device=self.DEVICE))
+                                                               B_n_distr.rsample().to(device=self.DEVICE))
         A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta),
-                                                               B_n_distr.sample().to(device=self.DEVICE), A_sample)
+                                                               B_n_distr.rsample().to(device=self.DEVICE), A_sample)
         prob = p_A_lives
         results[0] = prob
 
@@ -304,8 +307,8 @@ class TorchGame():
         A_n_distr = PseudoDistr(theta[0, 0])
         B_n_distr = PseudoDistr(theta[0, 1])
 
-        B_sample = B_n_distr.sample().to(device=self.DEVICE)
-        A_sample = A_n_distr.sample().to(device=self.DEVICE)
+        B_sample = B_n_distr.rsample().to(device=self.DEVICE)
+        A_sample = A_n_distr.rsample().to(device=self.DEVICE)
         A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta), B_sample, A_sample)
         # B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_sample,  B_sample)
         prob = p_A_lives
@@ -315,10 +318,10 @@ class TorchGame():
         A_n_distr = PseudoDistr(theta[0, 0])
         B_n_distr = PseudoDistr(theta[0, 1])
 
-        B_sample = B_n_distr.sample().to(device=self.DEVICE)
-        A_sample = A_n_distr.sample().to(device=self.DEVICE)
+        B_sample = B_n_distr.rsample().to(device=self.DEVICE)
+        A_sample = A_n_distr.rsample().to(device=self.DEVICE)
         A_n_distr, p_A_lives, A_dead = self.getActualDefenders(flipTheta(theta), B_sample, A_sample)
-        # B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_n_distr.sample(), B_sample)
+        # B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_n_distr.rsample(), B_sample)
         prob = p_A_lives
         results[2] = prob
 

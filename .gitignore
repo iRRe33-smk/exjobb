@@ -5,5 +5,4 @@
 *xml
 *.pyc
 *.stats
-passwordfile.txt
-saved_runs/
+
