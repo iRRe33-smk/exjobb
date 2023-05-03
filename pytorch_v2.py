@@ -13,6 +13,8 @@ from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 # from matplotlib import pyplot as plt
 from classes.history import History
+import pickle
+
 
 
 class RandomDataSet(Dataset):
@@ -67,7 +69,8 @@ class TorchGame():
     def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
                  Players_action_length=[10, 10], I=.5, D=5, omega=.1, Stochastic_state_update=True,
                  Max_optim_iter=50, Filter_actions=True, base_params="paper",
-                 NumRepsBattle=8, DEVICE="cpu", MultiProcess=False) -> None:
+                 NumRepsBattle=8, DEVICE="cpu", MultiProcess=False, SGD=False,
+                 fromSave=False) -> None:
         self.DEVICE = DEVICE
 
         self.Horizon = Horizon
@@ -78,6 +81,7 @@ class TorchGame():
         self.Max_optim_iter = Max_optim_iter
         self.NumRepsBattle = NumRepsBattle
         self.MultiProcess = MultiProcess
+        self.SGD = SGD
 
         # Used in TRL calculations
         self.I = I
@@ -89,8 +93,8 @@ class TorchGame():
 
         self.FINAL_ACTIONS = []
         self.History = History()
-        # self.dirPath = self.History.make_dir()
         self.Q = []
+        self.fromSave = fromSave
 
         df_stat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="StartingState", header=0, index_col=0)
         print(df_stat)
@@ -648,41 +652,64 @@ class TorchGame():
                     convergence_hist)):  # or torch.all(torch.norm(action_step):
 
                 with torch.no_grad():
-                    jac_z = jacobian(scoringFun, z_n, **params_jacobian)
-                    grad_norms.append(torch.norm(jac_z, p=2))
+                    if self.SGD:
+                    
+                        
+                        jac_z = jacobian(scoringFun, z_n, **params_jacobian)
+                        gamma1 = LR_sched(iteration)
+                        g_x = jac_z[:self.N_Technologies]# + hess_nu[:self.N_Technologies]
+                        g_y = - jac_z[self.N_Technologies:]# - hess_nu[self.N_Technologies:]
+                        z_step = torch.cat((gamma1 * g_x, gamma1 * g_y), dim=0)
+                        z_step = torch.clamp(z_step, min=-5, max=10)
+                        z_n += z_step  # .unsqueeze(dim = 1)
+                        
+                        check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
+                        # check2 = (torch.norm(self.stack_var(z_step), p=2, dim=0) <5E-1).all()
+                        
+                        convergence_hist.pop(0)
+                        convergence_hist.append((check2<1E-1).all())
+                        if all(convergence_hist):
+                            break
+                
+                    else:
+                        
+                        jac_z = jacobian(scoringFun, z_n, **params_jacobian)
+                        grad_norms.append(torch.norm(jac_z, p=2))
 
-                    hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), **params_hessian)
-                    hess_nu = hess @ nu_n
+                        hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), **params_hessian)
+                        hess_nu = hess @ nu_n
 
-                    omega = jac_z * grad_flipper
-                    L_val = L(xi_1, omega)
-                    fun_nu = lambda nu_n: torch.norm(hess_nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
-                    jac_nu = jacobian(fun_nu, nu_n, **params_jacobian)
+                        omega = jac_z * grad_flipper
+                        L_val = L(xi_1, omega)
+                        fun_nu = lambda nu_n: torch.norm(hess_nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
+                        jac_nu = jacobian(fun_nu, nu_n, **params_jacobian)
 
-                    g_x = jac_z[:self.N_Technologies] + hess_nu[:self.N_Technologies]
-                    g_y = - jac_z[self.N_Technologies:] - hess_nu[self.N_Technologies:]
-                    g_nu = jac_nu
+                        g_x = jac_z[:self.N_Technologies] + hess_nu[:self.N_Technologies]
+                        g_y = - jac_z[self.N_Technologies:] - hess_nu[self.N_Technologies:]
+                        g_nu = jac_nu
 
-                    gamma1 = LR_sched(iteration)
-                    z_step = torch.cat((gamma1 * g_x, gamma1 * g_y), dim=0)
-                    z_step = torch.clamp(z_step, min=-5, max=10)
-                    z_n += z_step  # .unsqueeze(dim = 1)
-                    step_norms.append(torch.norm(z_step, p=2))
+                        gamma1 = LR_sched(iteration)
+                        z_step = torch.cat((gamma1 * g_x, gamma1 * g_y), dim=0)
+                        z_step = torch.clamp(z_step, min=-5, max=10)
+                        z_n += z_step  # .unsqueeze(dim = 1)
+                        step_norms.append(torch.norm(z_step, p=2))
 
-                    nu_step = gamma2 * g_nu
-                    nu_n += nu_step
+                        nu_step = gamma2 * g_nu
+                        nu_n += nu_step
 
-                    check1 = torch.max(torch.abs(omega))
-                    check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
-                    # print(f"it: {iteration}, max(Omega): {check1}, norm(z_step): {check2} \n")
-                    # print(f"norm(nu): {check2}")
-                    convergence_hist.pop(0)
-                    convergence_hist.append(
-                        check1 < 1E-3 and torch.all(check2 < 5E-1) and iteration > 10
-                    )
+                        check1 = torch.max(torch.abs(omega))
+                        check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
+                        # print(f"it: {iteration}, max(Omega): {check1}, norm(z_step): {check2} \n")
+                        # print(f"norm(nu): {check2}")
+                        convergence_hist.pop(0)
+                        convergence_hist.append(
+                            check1 < 1E-3 and torch.all(check2 < 5E-1) and iteration > 10
+                        )
 
-                    # winprob_n = sum([scoringFun(z_n) for _ in range(num_reps)])/num_reps
-                    # winprobs.append(winprob_n)
+                        # winprob_n = sum([scoringFun(z_n) for _ in range(num_reps)])/num_reps
+                        # winprobs.append(winprob_n)
+                       
+                        
                     iteration += 1
 
                     # if False and (iteration % 10 == 0 or iteration < 5):
@@ -890,15 +917,54 @@ class TorchGame():
         else:
             return NashEquilibria[:self.Max_actions_chosen]
 
+    
+    def tempSaveRun(self, Q, hist):
+        tempDirPath = "temporarySaveDir"
+        
+        if not os.path.isdir(tempDirPath):
+            os.mkdir("temporarySaveDir")
+        
+        Qpath = os.path.join(tempDirPath, "Q.pkl")
+        with open(Qpath,"wb+") as f:        
+            pickle.dump(Q, f)
+        
+        histpath = os.path.join(tempDirPath, "hist.pkl")
+        with open(histpath,"wb+") as f:        
+            pickle.dump(hist, f)
+        print("saved run")
+    
+    def tempLoadRun(self):
+        tempDirPath = "temporarySaveDir"   
+        
+        Qpath = os.path.join(tempDirPath, "Q.pkl")
+        with open(Qpath,"rb") as f:
+            self.Q = pickle.load(f)
+    
+        
+        histpath = os.path.join(tempDirPath, "hist.pkl")
+        with open(histpath,"rb") as f:
+            self.History = pickle.load(f)
+        
+        hlist = self.History.HistoryList
+        node_idn = [el["Node_id"] for el in hlist]
+        node_id = max(node_idn)
+        return node_id
+        
+        
     def Run(self):
+        
         maxactions = sum([self.Max_actions_chosen ** h for h in range(self.Horizon)])
 
-        node_id = 0
-        self.Q.append((self.InitialState, 0, node_id))
-        self.History.add_data(node_id, None, 0, self.InitialState.cpu().numpy(), None, 0)
+        if self.fromSave:
+            node_id = self.tempLoadRun()
+            # node_id = self.Q[-1][-1]
 
+        else:            
+            node_id = 0
+            self.Q.append((self.InitialState, 0, node_id))
+            self.History.add_data(node_id, None, 0, self.InitialState.cpu().numpy(), None, 0)
+            
         pbar = tqdm(desc="number of states evaluated", total=maxactions, position=0, leave=True)
-
         while (len(self.Q) > 0):
             st, t, parent_node_id = self.Q.pop()  # the state which we are currently examining
 
@@ -921,6 +987,8 @@ class TorchGame():
 
                 if t + 1 < self.Horizon:
                     self.Q.append((st_new, t + 1, node_id))
+                    
+            self.tempSaveRun(self.Q, self.History)
         pbar.close()
         return self.History
 
@@ -928,22 +996,24 @@ class TorchGame():
 if __name__ == "__main__":
 
     params_medium = {
-        "Horizon": 5, "Max_actions_chosen": 5, "N_actions_startpoint": 64, "I": .5, "D": 5,
-        "Players_action_length": [5, 5], "Max_optim_iter": 64, "Filter_actions": True,
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 16,
-        "DEVICE": "cpu", "MultiProcess": True
+        "Horizon": 4, "Max_actions_chosen": 5, "N_actions_startpoint": 32, "I": .5, "D": 5,
+        "Players_action_length": [1, 1], "Max_optim_iter": 64, "Filter_actions": True,
+        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 8,
+        "DEVICE": "cpu", "MultiProcess": True, "SGD": True, "fromSave":False
     }
 
     params_test = {
-        "Horizon": 2, "Max_actions_chosen": 5, "N_actions_startpoint": 32, "I": .5, "D": 5,
-        "Players_action_length": [1, 1], "Max_optim_iter": 150, "Filter_actions": True,
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 16,
-        "DEVICE": "cpu", "MultiProcess": True
+        "Horizon": 2, "Max_actions_chosen": 5, "N_actions_startpoint": 5, "I": .5, "D": 5,
+        "Players_action_length": [1, 1], "Max_optim_iter": 10, "Filter_actions": False,
+        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 2,
+        "DEVICE": "cpu", "MultiProcess": False, "SGD": True, "fromSave":False
     }
     combitech = {
         "Horizon": 5, "Max_actions_chosen": 5, "N_actions_startpoint": 15*5, "I": 0.5, 
-        "D": 5, "Players_action_length": [5, 5], "Max_optim_iter": 250, "Filter_actions": True, 
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 40, "DEVICE": "cpu", "MultiProcess": True}
+        "D": 5, "Players_action_length": [1, 1], "Max_optim_iter": 250, "Filter_actions": True, 
+        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 40, "DEVICE": "cpu", "MultiProcess": True, "fromSave":False
+        }
+    
     params = params_test
     FullGame = TorchGame(**params)
 
