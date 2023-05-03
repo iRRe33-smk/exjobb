@@ -117,7 +117,7 @@ class TorchGame():
         with open("citation_analysis/distribution_params.json") as f:
             dat = json.load(f)
             mu = [dat[k]["mu"] for k in dat.keys()]
-            sigma = [dat[k]["sigma"] for k in dat.keys()]
+            sigma = [dat[k]["scale"] for k in dat.keys()]
             self.xi_params_mu = torch.tensor(mu, device=self.DEVICE)
             self.xi_params_sigma = torch.tensor(sigma, device=self.DEVICE)
             self.xi_dist = torch.distributions.log_normal.LogNormal(self.xi_params_mu, self.xi_params_sigma)
@@ -184,14 +184,24 @@ class TorchGame():
         return act_norm
 
     def Update_State(self, State, Action, override_stochastic=None):
+        if self.Stochastic_state_update:
+        
+            paramsize= self.xi_params_mu.size()
 
+            xi1 = torch.exp(self.xi_params_mu + self.xi_params_sigma * torch.normal(0.0,1.0,size=paramsize))
+            xi2 = torch.exp(self.xi_params_mu + self.xi_params_sigma * torch.normal(0.0,1.0,size=paramsize))
+            
+            xi = self.stack_var(torch.cat((xi1,xi2),dim=0))
+            
+            xi = torch.clamp(xi,0,5)
+            
+            # xi = self.xi_dist.rsample([2])
+           
+            
+        else:
+            xi = 1.0
+        
         with torch.no_grad():
-
-            if self.Stochastic_state_update:
-                xi = self.xi_dist.rsample([2]).T
-            else:
-                xi = 1
-
             if override_stochastic is not None:
                 if override_stochastic:
                     xi = self.xi_dist.rsample([2]).T
@@ -202,6 +212,7 @@ class TorchGame():
         assert ~torch.any(torch.isnan(UpdateValue))
 
         newState = torch.add(State, UpdateValue)
+        newState = torch.clamp(newState,0,12)
         assert ~torch.any(torch.isnan(newState))
 
         return newState
@@ -211,17 +222,18 @@ class TorchGame():
         trl = torch.pow(1 + torch.exp(-State / self.I + self.D), -1) + \
               torch.pow(1 + torch.exp(-State / self.I + 3 * self.D), -1)
 
-        trl = (1 / (1 + ((-State / self.I) + self.D).exp())) + (1 / (1 + ((-State / self.I) + 3 * self.D).exp()))
+        # trl = (1 / (1 + ((-State / self.I) + self.D).exp())) + (1 / (1 + ((-State / self.I) + 3 * self.D).exp()))
 
         # assert torch.allclose(trl_old, trl)
 
         return trl
 
     def techToParams(self, State):
-
+        # print(State)
         trl = self.TechnologyReadiness(State)
         assert ~torch.any(torch.isnan(trl))
-
+        # print(trl)
+        
         theta = self.omega * (self.PARAMCONVERSIONMATRIX @ trl) + self.baseLine_params
         assert ~torch.any(torch.isnan(theta))
         # print(theta)
@@ -621,7 +633,7 @@ class TorchGame():
         nu_n = 100 * torch.ones((self.N_Technologies * 2, 1), device=self.DEVICE)
         gamma2 = 1 * torch.tensor(1, device=self.DEVICE)  # step size nu
         xi_1 = 1 * torch.tensor(1, device=self.DEVICE)  # regularization, pushes solution towards NE
-        convergence_hist = [False] * 7
+        convergence_hist = [False] * 15
         iteration = 0
 
         # sc = scoringFun(z_n)
@@ -837,8 +849,8 @@ class TorchGame():
             p = mp.pool.Pool(processes)
             chunksize = int(self.N_actions_startpoint / processes)
             with p as pool:
-                results = pool.map_async(self.OptimizeActionMP, optim_params, chunksize=chunksize)
-            NashEquilibria = results.get()
+                NashEquilibria = pool.map_async(self.OptimizeActionMP, optim_params, chunksize=chunksize).get()
+                # NashEquilibria = results.get()
 
         else:
             processes = 100
@@ -923,18 +935,18 @@ if __name__ == "__main__":
     }
 
     params_test = {
-        "Horizon": 3, "Max_actions_chosen": 5, "N_actions_startpoint": 32, "I": .5, "D": 5,
-        "Players_action_length": [5, 5], "Max_optim_iter": 128, "Filter_actions": True,
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 12,
-        "DEVICE": "cpu", "MultiProcess": False
+        "Horizon": 2, "Max_actions_chosen": 5, "N_actions_startpoint": 32, "I": .5, "D": 5,
+        "Players_action_length": [1, 1], "Max_optim_iter": 150, "Filter_actions": True,
+        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 16,
+        "DEVICE": "cpu", "MultiProcess": True
     }
     combitech = {
         "Horizon": 5, "Max_actions_chosen": 5, "N_actions_startpoint": 15*5, "I": 0.5, 
-        "D": 5, "Players_action_length": [5, 5], "Max_optim_iter": 125, "Filter_actions": True, 
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 32, "DEVICE": "cpu", "MultiProcess": True}
+        "D": 5, "Players_action_length": [5, 5], "Max_optim_iter": 250, "Filter_actions": True, 
+        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 40, "DEVICE": "cpu", "MultiProcess": True}
     params = params_test
     FullGame = TorchGame(**params)
 
     hist = FullGame.Run()
     hist.save_to_file_2(params)
-    hist.send_email(test=False)
+    hist.send_email(test=True)
