@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader, Dataset, TensorDataset
 import numpy as np
 from tqdm import tqdm
 import time, math, json, os, random, string, multiprocessing as mp
+from multiprocessing import set_start_method
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -340,7 +341,7 @@ class TorchGame():
         # B_n_distr, p_B_lives, B_dead = self.getActualDefenders(theta, A_n_distr.rsample(), B_sample)
         prob = p_A_lives
         results[2] = prob
-
+        # print(results)
         weighted_results = torch.sum(results * initiativeProbabilities)
         return weighted_results
 
@@ -868,24 +869,24 @@ class TorchGame():
 
     def GetActionsMP(self, State):
         ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint], device=self.DEVICE)
-        optim_params = [{"State": State, "Action": ActionStartPoints[:, :, i], "num_reps": self.NumRepsBattle} for i
+        optim_params = [{"State": State.clone(), "Action": ActionStartPoints[:, :, i].clone(), "num_reps": self.NumRepsBattle} for i
                         in range(self.N_actions_startpoint)]
         if self.DEVICE == "cpu":
 
-            processes = 15
+            processes = 60
             p = mp.pool.Pool(processes)
             chunksize = int(self.N_actions_startpoint / processes)
             with p as pool:
                 NashEquilibria = pool.map_async(self.OptimizeActionMP, optim_params, chunksize=chunksize).get()
-                # NashEquilibria = results.get()
+               
 
         else:
-            processes = 100
-            p = tmp.Pool(processes)
-            chunksize = int(self.N_actions_startpoint / processes)
+            processes = 2
+            p = tmp.Pool(processes,)
+            chunksize = None
+
             with p as pool:
-                results = pool.map_async(self.OptimizeActionMP, optim_params, chunksize=chunksize)
-            NashEquilibria = results.get()
+                NashEquilibria = pool.map_async(self.OptimizeActionMP, optim_params, chunksize=chunksize).get()
 
 
         if self.filter_actions:
@@ -995,27 +996,31 @@ class TorchGame():
 
 if __name__ == "__main__":
 
-    params_medium = {
-        "Horizon": 4, "Max_actions_chosen": 5, "N_actions_startpoint": 32, "I": .5, "D": 5,
-        "Players_action_length": [1, 1], "Max_optim_iter": 64, "Filter_actions": True,
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 8,
-        "DEVICE": "cpu", "MultiProcess": True, "SGD": True, "fromSave":False
+    params_single_step = {
+        "Horizon": 1, "Max_actions_chosen": 350, "N_actions_startpoint": 350, "I": .5, "D": 5,
+        "Players_action_length": [1, 1], "Max_optim_iter": 64, "Filter_actions": False,
+        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 40,
+        "DEVICE": "cpu", "MultiProcess": True, "SGD": False, "fromSave":False
     }
 
     params_test = {
-        "Horizon": 2, "Max_actions_chosen": 5, "N_actions_startpoint": 5, "I": .5, "D": 5,
-        "Players_action_length": [1, 1], "Max_optim_iter": 10, "Filter_actions": False,
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 2,
-        "DEVICE": "cpu", "MultiProcess": False, "SGD": True, "fromSave":False
+        "Horizon": 2, "Max_actions_chosen": 5, "N_actions_startpoint": 100, "I": .5, "D": 5,
+        "Players_action_length": [1, 1], "Max_optim_iter": 100, "Filter_actions": True,
+        "Stochastic_state_update": True, "base_params": "custom", "NumRepsBattle": 12,
+        "DEVICE": "cpu", "MultiProcess": True, "SGD": False, "fromSave":False
     }
     combitech = {
-        "Horizon": 5, "Max_actions_chosen": 5, "N_actions_startpoint": 15*5, "I": 0.5, 
+        "Horizon": 5, "Max_actions_chosen": 7, "N_actions_startpoint": 105, "I": 0.5, 
         "D": 5, "Players_action_length": [1, 1], "Max_optim_iter": 250, "Filter_actions": True, 
-        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 40, "DEVICE": "cpu", "MultiProcess": True, "fromSave":False
+        "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 40,
+        "DEVICE": "cpu", "MultiProcess": True, "fromSave":False
         }
     
-    params = params_test
+    params = combitech
     FullGame = TorchGame(**params)
+    
+    # if FullGame.DEVICE == "cuda":
+    #     set_start_method('spawn')
 
     hist = FullGame.Run()
     hist.save_to_file_2(params)
