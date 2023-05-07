@@ -873,9 +873,9 @@ class TorchGame():
                         in range(self.N_actions_startpoint)]
         if self.DEVICE == "cpu":
 
-            processes = 60
+            processes = 15
             p = mp.pool.Pool(processes)
-            chunksize = int(self.N_actions_startpoint / processes)
+            chunksize = 2
             with p as pool:
                 NashEquilibria = pool.map_async(self.OptimizeActionMP, optim_params, chunksize=chunksize).get()
                
