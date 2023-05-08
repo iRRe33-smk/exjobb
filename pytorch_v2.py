@@ -12,9 +12,18 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
-# from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt
 from classes.history import History
 import pickle
+
+
+plt.style.use('bmh')
+# plt.rcParams["figure.facecolor"] = "D1E2FF"
+# plt.rcParams["axes.facecolor"] = "F2F8FF"
+csfont = {'fontname':'Georgia'}
+hfont = {'fontname':'Helvetica'}
+plt.rcParams["font.family"] = "serif"
+plt.rcParams["font.serif"] = ["Times new roman"]
 
 
 
@@ -632,13 +641,13 @@ class TorchGame():
 
         # Hyperparmeters LSS
 
-        def LR_sched(it, max=500, div=50, add=100):
+        def LR_sched(it, max=250, div=20, add=100):
             return torch.tensor(max / (math.exp((it + 1) / div)) + add)
 
         nu_n = 100 * torch.ones((self.N_Technologies * 2, 1), device=self.DEVICE)
         gamma2 = 1 * torch.tensor(1, device=self.DEVICE)  # step size nu
         xi_1 = 1 * torch.tensor(1, device=self.DEVICE)  # regularization, pushes solution towards NE
-        convergence_hist = [False] * 15
+        convergence_hist = [False] * 25
         iteration = 0
 
         # sc = scoringFun(z_n)
@@ -704,25 +713,37 @@ class TorchGame():
                         # print(f"norm(nu): {check2}")
                         convergence_hist.pop(0)
                         convergence_hist.append(
-                            check1 < 1E-3 and torch.all(check2 < 5E-1) and iteration > 10
+                            check1 < 1E-4 and torch.all(check2 < 5E-2) and iteration > 10
                         )
 
-                        # winprob_n = sum([scoringFun(z_n) for _ in range(num_reps)])/num_reps
-                        # winprobs.append(winprob_n)
+                        winprob_n = sum([scoringFun(z_n) for _ in range(num_reps)])/num_reps
+                        winprobs.append(winprob_n)
                        
                         
                     iteration += 1
 
                     # if False and (iteration % 10 == 0 or iteration < 5):
-                    # if iteration in [0,10]  and np.random.rand() < 0.005:
+                    # if iteration in [1,2]  or np.random.rand() < 0.1:
                     #     fig, axes = plt.subplots(ncols=2)
-                    #     plt.title(f"iteration: {iteration}, prob = {winprob_n}")
+                    #     # plt.title(f"iteration: {iteration}, prob = {winprob_n}")
                     #     ax1, ax2 = axes
-                    #     im1 = ax1.imshow((hess - torch.mean(hess)) / torch.std(hess), cmap="hot", interpolation="nearest", label="hessian")
-                    #     im2 = ax2.imshow((jac_z-torch.mean(jac_z)) / torch.std(jac_z), cmap="hot", interpolation="nearest", label="gradient")
-
-                    #     name = f"Hessian:{iteration}_{self.make_random_str(16)}"
-                    #     fig.savefig(os.path.join(self.dirPath, name) +".pdf", format = "pdf")                        
+                    #     ax1.set_xticks([0,5,10,15,20,25])
+                    #     # hess = hess + torch.randn(size=hess.size())/750
+                    #     im1 = ax1.imshow((hess - torch.mean(hess, (0,1))) / torch.std(hess) , cmap="coolwarm", interpolation="nearest", label="hessian")
+                    #     im2 = ax2.imshow((jac_z-torch.mean(jac_z, (0,1))) / torch.std(jac_z), cmap="coolwarm", interpolation="nearest", label="gradient")
+                    #     ax2.set_xticklabels([])
+                    #     # fig.legend()
+                    #     fig.tight_layout(h_pad = 0, pad = .5)
+                    #     fig.show()
+                    #     # if input("[y] to save figure") == "y":
+                    #     #     fig.savefig("figures/LSS_Hessian_2.pdf", bbox_inches = 'tight',pad_inches = 0.25)
+                    #     #     print("saved figure")
+                    #     # else:
+                    #     #     print("did not save")
+                        
+                       
+                    # name = f"Hessian:{iteration}_{self.make_random_str(16)}"
+                    # fig.savefig(os.path.join(self.dirPath, name) +".pdf", format = "pdf")                        
 
             final_action = z_n.detach()
 
@@ -736,20 +757,34 @@ class TorchGame():
             #     name = f"Hessian_conv:{iteration}_{self.make_random_str(16)}"
             #     fig.savefig(os.path.join(self.dirPath, name) +".pdf", format = "pdf")      
 
-            #     #training trajectory
-            #     fig, ax1 = plt.subplots()
-            #     # fig.title("norms")
-            #     ax1.plot(range(iteration), grad_norms, color="red", label="grad norms")
-            #     ax1.legend()
-            #     ax2 = ax1.twinx()
-            #     ax3 = ax1.twinx()
-            #     ax2.plot(range(iteration), step_norms, color="blue", label="step norms")
-            #     ax2.legend()
-            #     ax3.plot(range(iteration), winprobs, color="green", label="winprob")
-            #     ax3.legend()
-            #     name = f"training_conv:{iteration}_{self.make_random_str(16)}"
-            #     fig.savefig(os.path.join(self.dirPath, name) +".pdf", format = "pdf") 
+            #training trajectory
+            fig, ax1 = plt.subplots()
+            # fig.title("norms")
+            # ax1.set_yscale("log")
+            ax1.set_ylabel("Gradient norms")
+            ax1.set_xlabel("Iteration")
+            
+            ax2 = ax1.twinx()
+            # ax2.set_yscale("log")
+            ax2.set_ylabel("Action-step norms")
+            
+            L1, = ax1.plot(range(iteration), grad_norms, color="red", label="Gradient norms")
+            # ax1.legend()
 
+           
+            # ax3 = ax1.twinx()
+            L2, = ax2.plot(range(iteration), step_norms, color="blue", label="Action-step norms")
+            fig.legend(handles = [L1, L2], loc="upper right")#, ["Gradient Norms", "Action-step Norms"])
+            # ax3.plot(range(iteration), winprobs, color="green", label="winprob")
+            # ax3.legend()
+            # name = f"training_conv:{iteration}_{self.make_random_str(16)}"
+            # plt.show()
+            fileName = "LSS-convergence_0"
+            path = os.path.join(os.getcwd(),"figures", fileName)+".pdf"
+            # print(path) 
+            plt.show()
+            # plt.savefig(path, format = "pdf")
+            pass
 
         except AssertionError as msg:
             print(msg)
@@ -1004,10 +1039,10 @@ if __name__ == "__main__":
     }
 
     params_test = {
-        "Horizon": 2, "Max_actions_chosen": 5, "N_actions_startpoint": 100, "I": .5, "D": 5,
-        "Players_action_length": [1, 1], "Max_optim_iter": 100, "Filter_actions": True,
-        "Stochastic_state_update": True, "base_params": "custom", "NumRepsBattle": 12,
-        "DEVICE": "cpu", "MultiProcess": True, "SGD": False, "fromSave":False
+        "Horizon": 5, "Max_actions_chosen": 2, "N_actions_startpoint": 10, "I": .5, "D": 5,
+        "Players_action_length": [1, 1], "Max_optim_iter": 250, "Filter_actions": True,
+        "Stochastic_state_update": True, "base_params": "custom", "NumRepsBattle": 40,
+        "DEVICE": "cpu", "MultiProcess": False, "SGD": False, "fromSave":False
     }
     combitech = {
         "Horizon": 5, "Max_actions_chosen": 7, "N_actions_startpoint": 105, "I": 0.5, 
@@ -1016,7 +1051,7 @@ if __name__ == "__main__":
         "DEVICE": "cpu", "MultiProcess": True, "fromSave":False
         }
     
-    params = combitech
+    params = params_test
     FullGame = TorchGame(**params)
     
     # if FullGame.DEVICE == "cuda":
