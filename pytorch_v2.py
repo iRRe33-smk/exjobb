@@ -380,7 +380,7 @@ class TorchGame():
         B_stay = theta[7, 1]
 
         mu_damage_AB = A_attack / B_stay
-        sigma_damage_AB = torch.tensor(1 / 3, device=self.DEVICE)
+        sigma_damage_AB = torch.tensor(1 / 2, device=self.DEVICE)
 
         mean_net_AB = A0 * A_offPower - B0 * B_defPower
         var_net_AB = A0 * A_offPower * (1 - A_offProb) + B0 * B_defPower * (1 - B_defProb)
@@ -641,13 +641,13 @@ class TorchGame():
 
         # Hyperparmeters LSS
 
-        def LR_sched(it, max=250, div=20, add=100):
+        def LR_sched(it, max=500, div=75, add=100):
             return torch.tensor(max / (math.exp((it + 1) / div)) + add)
 
         nu_n = 100 * torch.ones((self.N_Technologies * 2, 1), device=self.DEVICE)
-        gamma2 = 1 * torch.tensor(1, device=self.DEVICE)  # step size nu
-        xi_1 = 1 * torch.tensor(1, device=self.DEVICE)  # regularization, pushes solution towards NE
-        convergence_hist = [False] * 25
+        gamma2 = 100 * torch.tensor(1, device=self.DEVICE)  # step size nu
+        xi_1 = 5 * torch.tensor(1, device=self.DEVICE)  # regularization, pushes solution towards NE
+        convergence_hist = [False] * 12
         iteration = 0
 
         # sc = scoringFun(z_n)
@@ -713,7 +713,7 @@ class TorchGame():
                         # print(f"norm(nu): {check2}")
                         convergence_hist.pop(0)
                         convergence_hist.append(
-                            check1 < 1E-4 and torch.all(check2 < 5E-2) and iteration > 10
+                            check1 < 5E-3 and torch.all(check2 < 1E-1) and iteration > 10
                         )
 
                         winprob_n = sum([scoringFun(z_n) for _ in range(num_reps)])/num_reps
@@ -735,11 +735,11 @@ class TorchGame():
                     #     # fig.legend()
                     #     fig.tight_layout(h_pad = 0, pad = .5)
                     #     fig.show()
-                    #     # if input("[y] to save figure") == "y":
-                    #     #     fig.savefig("figures/LSS_Hessian_2.pdf", bbox_inches = 'tight',pad_inches = 0.25)
-                    #     #     print("saved figure")
-                    #     # else:
-                    #     #     print("did not save")
+                        # if input("[y] to save figure") == "y":
+                        #     fig.savefig("figures/LSS_Hessian_2.pdf", bbox_inches = 'tight',pad_inches = 0.25)
+                        #     print("saved figure")
+                        # else:
+                        #     print("did not save")
                         
                        
                     # name = f"Hessian:{iteration}_{self.make_random_str(16)}"
@@ -759,31 +759,42 @@ class TorchGame():
 
             #training trajectory
             fig, ax1 = plt.subplots()
+            handles = []
+            # fig.s
+
             # fig.title("norms")
             # ax1.set_yscale("log")
             ax1.set_ylabel("Gradient norms")
             ax1.set_xlabel("Iteration")
             
             ax2 = ax1.twinx()
+            ax2.grid(False)
             # ax2.set_yscale("log")
             ax2.set_ylabel("Action-step norms")
             
             L1, = ax1.plot(range(iteration), grad_norms, color="red", label="Gradient norms")
-            # ax1.legend()
+            handles.append(L1)
 
            
-            # ax3 = ax1.twinx()
             L2, = ax2.plot(range(iteration), step_norms, color="blue", label="Action-step norms")
-            fig.legend(handles = [L1, L2], loc="upper right")#, ["Gradient Norms", "Action-step Norms"])
-            # ax3.plot(range(iteration), winprobs, color="green", label="winprob")
-            # ax3.legend()
+            handles.append(L2)
+           
+            ax3 = ax1.twinx()
+            ax3.set_yticks([])
+            ax3.grid(False)
+            L3, = ax3.plot(range(iteration), winprobs, color="green", label="Objective function")
+            handles.append(L3)
+            
+            fig.legend(handles = handles, loc="upper right")#, ["Gradient Norms", "Action-step Norms"])
+           
             # name = f"training_conv:{iteration}_{self.make_random_str(16)}"
-            # plt.show()
+            # # plt.show()
             fileName = "LSS-convergence_0"
             path = os.path.join(os.getcwd(),"figures", fileName)+".pdf"
-            # print(path) 
+
+            print(path) 
             plt.show()
-            # plt.savefig(path, format = "pdf")
+            # # plt.savefig(path, format = "pdf")
             pass
 
         except AssertionError as msg:
@@ -946,7 +957,7 @@ class TorchGame():
                       leave=True):
             init_action = ActionStartPoints[:, :, i]
             NE_action = self.OptimizeAction(
-                State, init_action)
+                State, init_action, self.NumRepsBattle)
             NashEquilibria.append(NE_action)
         if self.filter_actions:
             return self.FilterActions(NashEquilibria)
@@ -1039,11 +1050,12 @@ if __name__ == "__main__":
     }
 
     params_test = {
-        "Horizon": 5, "Max_actions_chosen": 2, "N_actions_startpoint": 10, "I": .5, "D": 5,
-        "Players_action_length": [1, 1], "Max_optim_iter": 250, "Filter_actions": True,
+        "Horizon": 5, "Max_actions_chosen": 4, "N_actions_startpoint": 15, "I": .5, "D": 5,
+        "Players_action_length": [1, 1], "Max_optim_iter": 500, "Filter_actions": True,
         "Stochastic_state_update": True, "base_params": "custom", "NumRepsBattle": 40,
         "DEVICE": "cpu", "MultiProcess": False, "SGD": False, "fromSave":False
     }
+    
     combitech = {
         "Horizon": 5, "Max_actions_chosen": 7, "N_actions_startpoint": 105, "I": 0.5, 
         "D": 5, "Players_action_length": [1, 1], "Max_optim_iter": 250, "Filter_actions": True, 
