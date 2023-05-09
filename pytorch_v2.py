@@ -780,13 +780,17 @@ class TorchGame():
             handles.append(L2)
            
             ax3 = ax1.twinx()
-            ax3.set_yticks([])
+            ax3.set_ylabel("Objective function values")
+            
+            ax3.spines.right.set_position(("outward", 40))
+            
+            # ax3.set_yticks([])
             ax3.grid(False)
             L3, = ax3.plot(range(iteration), winprobs, color="green", label="Objective function")
             handles.append(L3)
             
             fig.legend(handles = handles, loc="upper right")#, ["Gradient Norms", "Action-step Norms"])
-           
+            fig.tight_layout()
             # name = f"training_conv:{iteration}_{self.make_random_str(16)}"
             # # plt.show()
             fileName = "LSS-convergence_0"
@@ -1052,7 +1056,7 @@ if __name__ == "__main__":
     params_test = {
         "Horizon": 5, "Max_actions_chosen": 4, "N_actions_startpoint": 15, "I": .5, "D": 5,
         "Players_action_length": [1, 1], "Max_optim_iter": 500, "Filter_actions": True,
-        "Stochastic_state_update": True, "base_params": "custom", "NumRepsBattle": 40,
+        "Stochastic_state_update": True, "base_params": "custom", "NumRepsBattle": 50,
         "DEVICE": "cpu", "MultiProcess": False, "SGD": False, "fromSave":False
     }
     
