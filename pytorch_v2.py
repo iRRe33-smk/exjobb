@@ -861,9 +861,14 @@ class TorchGame():
                     #perform LSS opimzation
                     else:
                         
+                        #gradient of scoring functuion w.r.t. investmens
                         jac_z = jacobian(scoringFun, z_n, **params_jacobian)
                         grad_norms.append(torch.norm(jac_z, p=2))
 
+                        #second degree partial derivatives of socring fun w.r.t. invesmtnets
+                        """Only hess @ nu is required. Try using Hessian-vector-product instead. 
+                        Should be faster but no such implentation has been found
+                        This is the most expensive line of code and speeding this up could realize major performance benefits"""
                         hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), **params_hessian)
                         hess_nu = hess @ nu_n
 
@@ -888,6 +893,9 @@ class TorchGame():
                         nu_n += nu_step
 
 
+                        
+                        """checkong convergence critera
+                        """
                         #convergence check
                         check1 = torch.max(torch.abs(omega))
                         check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
@@ -905,8 +913,8 @@ class TorchGame():
                     iteration += 1
 
 
-                    #MAKE PLOTS
-
+                    """MAKE PLOTS every iteration
+                    """
                     # # if False and (iteration % 10 == 0 or iteration < 5):
                     # if iteration in [1,5]  or np.random.rand() < 0.1:
                     #     fig, axes = plt.subplots(ncols=2)
@@ -932,7 +940,9 @@ class TorchGame():
                     # fig.savefig(os.path.join(self.dirPath, name) +".pdf", format = "pdf")                        
 
             final_action = z_n.detach()
-
+            
+            """make plots after convergence
+            """
             # if np.random.rand() < 0.01:
             #     #converged hessian
             #     fig, axes = plt.subplots(ncols=2)
@@ -996,6 +1006,7 @@ class TorchGame():
     def FilterActions(self, Actions, q_max=8, share_of_variance=.8):
 
         def PCA(a_mat):
+            
             (U, S, V) = torch.svd(a_mat)
 
             ind = ((torch.cumsum(S, 0) / torch.sum(S)) > share_of_variance).tolist()
@@ -1004,28 +1015,6 @@ class TorchGame():
             q = min(q_max, first_true)
             return V[:, :q]
 
-        # def k_means_elbow(dataset):
-        #     sum_of_squared_distances = []
-        #     K = range(1,10)
-        #     for num_clusters in K:
-        #         kmeans = KMeans(
-        #             init= "random",
-        #             n_clusters=num_clusters,
-        #             n_init=10,
-        #             max_iter=300,
-        #             random_state=42
-        #         )
-        #         kmeans.fit(dataset)
-        #         sum_of_squared_distances.append(kmeans.inertia_)
-        #
-        #     plt.plot(K,sum_of_squared_distances,'bx-')
-        #     plt.xlabel('Values of K')
-        #     plt.ylabel('Sum of squared distances/Inertia')
-        #     plt.title('Elbow Method For Optimal k')
-        #     plt.show()
-        #
-        #     optimal_k = 5
-        #     return optimal_k
 
         def k_means_silhouette_analysis(dataset, plot):
             # max_clusters = max(self.Max_actions_chosen,)
