@@ -1,13 +1,10 @@
 import torch
 from torch.autograd.functional import jacobian, hessian, hvp, vhp
 from torch import multiprocessing as tmp
-from torch.utils.data import DataLoader, Dataset, TensorDataset
-# from functorch import jvp, vmap
-# from functorch import jacrev as ft_jacobian, grad as ft_grad, jvp as ft_jvp
-import numpy as np
+# import numpy as np
 from tqdm import tqdm
 import time, math, json, os, random, string, multiprocessing as mp
-from multiprocessing import set_start_method
+# from multiprocessing import set_start_method
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -27,39 +24,42 @@ plt.rcParams["font.serif"] = ["Times new roman"]
 
 
 
-class RandomDataSet(Dataset):
-    def __init__(self, nTech, nSamples, budget):
-        self.nSamples = nSamples
-        dataA = torch.rand(size = [nSamples , nTech], device="cuda")
-        data_A_norm = budget[0] * dataA / torch.sum(dataA, 0)
-        dataB = torch.rand(size=[nSamples, nTech], device="cuda")
-        data_B_norm = budget[0] * dataB / torch.sum(dataB, 0)
+# class RandomDataSet(Dataset):
+#     def __init__(self, nTech, nSamples, budget):
+#         self.nSamples = nSamples
+#         dataA = torch.rand(size = [nSamples , nTech], device="cuda")
+#         data_A_norm = budget[0] * dataA / torch.sum(dataA, 0)
+#         dataB = torch.rand(size=[nSamples, nTech], device="cuda")
+#         data_B_norm = budget[0] * dataB / torch.sum(dataB, 0)
 
-        self.data = torch.cat((data_A_norm, data_B_norm), dim=1)
-        print("made data")
+#         self.data = torch.cat((data_A_norm, data_B_norm), dim=1)
+#         print("made data")
 
-    def __len__(self):
-        return self.nSamples
+#     def __len__(self):
+#         return self.nSamples
 
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
+#     def __getitem__(self, idx):
+#         if torch.is_tensor(idx):
+#             idx = idx.tolist()
 
-        sample = self.data[idx, :]
-        return sample
+#         sample = self.data[idx, :]
+#         return sample
 
-class StateDataSet(Dataset):
-    def __init__(self, State, nSamples):
-        self.nSamples = nSamples
-        self.State = State
+# class StateDataSet(Dataset):
+#     def __init__(self, State, nSamples):
+#         self.nSamples = nSamples
+#         self.State = State
 
-    def __len__(self):
-        return self.nSamples
+#     def __len__(self):
+#         return self.nSamples
 
-    def __getitem__(self, idx):
-        return self.State
+#     def __getitem__(self, idx):
+#         return self.State
 
 class PseudoDistr():
+    """Class to mimick torch distribution but always return same value.
+    Used in salvo combat model simulations
+    """
     def __init__(self, loc=0, scale=0):
         self.loc = loc
         self.scale = scale
@@ -76,11 +76,34 @@ class PseudoDistr():
 
 
 class TorchGame():
+    """ class containing all methods required to run simulation.
+    """
     def __init__(self, Horizon=5, Max_actions_chosen=10, N_actions_startpoint=30,
                  Players_action_length=[10, 10], I=.5, D=5, omega=.1, Stochastic_state_update=True,
                  Max_optim_iter=50, Filter_actions=True, base_params="paper",
                  NumRepsBattle=8, DEVICE="cpu", MultiProcess=False, SGD=False,
                  fromSave=False) -> None:
+        """_summary_
+
+        Args:
+            Horizon (int, optional): 'depth' of simulation. Defaults to 5.
+            Max_actions_chosen (int, optional): maximum number of actions / investment strategies taken in any node. Defaults to 10.
+            N_actions_startpoint (int, optional): Number of random actions initiated in every state. Defaults to 30.
+            Players_action_length (list, optional): maximum investment budget. Defaults to [10, 10].
+            I (float, optional): Slope parameter for TRL-curve . Defaults to .5.
+            D (int, optional): Shift parameter for TRL-curve . Defaults to 5.
+            omega (float, optional): Scaling parameter for impact of player investments on battle parameters . Defaults to .1.
+            Stochastic_state_update (bool, optional): Should technology research progress be stochastic. Defaults to True.
+            Max_optim_iter (int, optional): Maximum number of iterations in LSS. Defaults to 50.
+            Filter_actions (bool, optional): Should converged actions be clustered and filtered, or should first max_actions_chosen be used?. Defaults to True.
+            base_params (str, optional): which version of base parameters be used "paper" or "custom" available . Defaults to "paper".
+            NumRepsBattle (int, optional): Number of times salvo combat model will be run during monte carlo simulation. Defaults to 8.
+            DEVICE (str, optional): On which compute unit shall code be run, "cuda" or "cpu". "cpu" is recomended. Defaults to "cpu".
+            MultiProcess (bool, optional): Shall LSS be run in parallell?. Defaults to False.
+            SGD (bool, optional): Should LSS or Simultaneous gradient descent be used. SGD is much faster but yields porr results. Defaults to False.
+            fromSave (bool, optional): Should simulation be restared from local save? Intermediate progress is saved in directory:temporarySaveDir . Defaults to False.
+        """
+        # Assigning input parameters
         self.DEVICE = DEVICE
 
         self.Horizon = Horizon
@@ -106,15 +129,20 @@ class TorchGame():
         self.Q = []
         self.fromSave = fromSave
 
+
+        #Loading starting state from excel
         df_stat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="StartingState", header=0, index_col=0)
         print(df_stat)
         self.InitialState = torch.tensor(df_stat.astype(float).values, device=self.DEVICE)
 
+        #Loading capability-matrix (C) from excel
         df_capaMat = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="ConversionMatrix", header=0,
                                    index_col=0)
         self.PARAMCONVERSIONMATRIX = torch.tensor(df_capaMat.astype(float).values, device=self.DEVICE)
         print(df_capaMat)
 
+        
+        #Assigning base parameters, "custom" or "paper"
         if base_params == "custom":
             df_baseParams_paper = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="BaseParamsCustom",
                                                 header=0, index_col=0)
@@ -124,9 +152,12 @@ class TorchGame():
             df_baseParams_paper = pd.read_excel("config_files/State_Conversion.xlsx", sheet_name="BaseParamsPaper",
                                                 header=0, index_col=0)
             self.baseLine_params_paper = torch.tensor(df_baseParams_paper.astype(float).values, device=self.DEVICE)
-
+        
+        
         self.assign_baseline_theta()
 
+        
+        #Loading parameters for technological impact distrubution
         self.N_Capabilities, self.N_Technologies = self.PARAMCONVERSIONMATRIX.size()
         with open("citation_analysis/distribution_params.json") as f:
             dat = json.load(f)
@@ -184,12 +215,38 @@ class TorchGame():
         return torch.rand(size=[nDim, nPoints])
 
     def flatten_var(self, act):
+        """Takes 2-d tensor of shape [n,2] and returns tensor of shape [2*n]
+        Used when converting between state and action shape suitable for LSS and during battle simulations
+
+        Args:
+            act (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
         return torch.concat((act[:, 0], act[:, 1]), 0).squeeze()
 
     def stack_var(self, z):
+        """Opposite function of flatten var, takes tensor of shape [N_technologies*2] and returns tensor[N_technolgoies, 2]
+
+        Args:
+            z (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
         return torch.stack((z[:self.N_Technologies], z[self.N_Technologies:]), dim=1).squeeze()
 
     def normAction(self, z):
+        """_summary_
+
+        Args:
+            z (_type_): State or action tensor of shape [N_technologies * 2] and returns tensor of shpae [N_tecnologies, 2]
+            Action is exponentiated and then scaled to length Players action length. Note that it allows for different invesment budgets among the two players
+
+        Returns:
+            _type_: _description_
+        """
         act_n = self.stack_var(torch.clamp(z, min=-10, max=25))
         # lim = 75
         # barrier = 15 * (torch.log(lim - act_n) - 5 * torch.log(torch.tensor([lim])))
@@ -198,6 +255,13 @@ class TorchGame():
         return act_norm
 
     def Update_State(self, State, Action, override_stochastic=None):
+        
+        """ Updaftes the current state with a current action and a random sample from the scientific impact distribution
+        Optionally uses no randomness
+
+        Returns:
+            _type_: _description_
+        """
         if self.Stochastic_state_update:
         
             paramsize= self.xi_params_mu.size()
@@ -232,6 +296,14 @@ class TorchGame():
         return newState
 
     def TechnologyReadiness(self, State):
+        """Calucate the TRL using the current state
+
+        Args:
+            State (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
 
         trl = torch.pow(1 + torch.exp(-State / self.I + self.D), -1) + \
               torch.pow(1 + torch.exp(-State / self.I + 3 * self.D), -1)
@@ -243,6 +315,15 @@ class TorchGame():
         return trl
 
     def techToParams(self, State):
+        """converts technolgi research to salvo battle parameters
+
+        Args:
+            State (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        
         # print(State)
         trl = self.TechnologyReadiness(State)
         assert ~torch.any(torch.isnan(trl))
@@ -254,12 +335,31 @@ class TorchGame():
         return theta
 
     def Battle(self, theta):
+        """ NOT USED, Basic battle function only comparing sum of battle parametr values
+
+        Args:
+            theta (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
         results = torch.sum(theta, dim=0) / torch.sum(theta)
         return results[0]
 
     def InitiativeProbabilities(self, phi, psi, sigma=1, c=1):
+        """Calculate initiative probabilies based on information-gathering battle parametrs 
 
-        stdev = 1.4142 * sigma
+        Args:
+            phi (_type_): theta[1,0] information gathetring parameter
+            psi (_type_): theta[1,1] information gathetring parameter
+            sigma (int, optional): _description_. Defaults to 1.
+            c (int, optional): scaling the sensitiy of initiative to battle parameters. Defaults to 1.
+
+        Returns:
+            _type_: _description_
+        """
+
+        stdev = math.sqrt(2) * sigma
         # if phi - psi is None:
         #     pass #assertion
         dist = torch.distributions.Normal(loc=phi - psi, scale=stdev, validate_args=False)
@@ -276,6 +376,15 @@ class TorchGame():
         return torch.stack([p1_favoured, neither_favoured, p2_favoured], dim=0)
 
     def ThetaToOffProb(self, theta):
+        """calculates probability of offensive missile hit.
+        
+
+        Args:
+            theta (p_a or p_b): _description_
+
+        Returns:
+            _type_: _description_
+        """
         # TODO : verify Parameter offensive probability
         d = 0
         i = 5
@@ -284,6 +393,15 @@ class TorchGame():
         return p
 
     def ThetaToDefProb(self, theta):
+        """calculates probability of Defensive missile hit.
+
+
+        Args:
+            theta (p_y or p_z): _description_
+
+        Returns:
+            _type_: _description_
+        """
         # TODO: verify parameter defensive probability
         d = 0
         i = 5
@@ -292,6 +410,14 @@ class TorchGame():
         return p
 
     def SalvoBattleStochasticWrapper(self, theta: torch.tensor):
+        """NOT IN USE Wrapper function for salvo battle
+
+        Args:
+            theta (torch.tensor): _description_
+
+        Returns:
+            _type_: _description_
+        """
         # TODO: Distribution of remaining units have to be taken into account. Monte carlo?
         initiativeProbabilities = self.InitiativeProbabilities(theta[1, 0], theta[1, 1])
 
@@ -310,7 +436,10 @@ class TorchGame():
         return weighted_prob
 
     def SalvoBattleSequential(self, theta: torch.tensor):
-
+        """Simulate stochastic sequential salvo combat using all three cases of initiative and one salvo fired by each player
+        Args:
+            theta (torch.tensor): _description_
+        """
         def flipTheta(theta):
             return torch.stack((theta[:, 1], theta[:, 0]), dim=1)
 
@@ -356,6 +485,16 @@ class TorchGame():
 
 
     def getActualDefenders(self, theta: torch.tensor, A0, B0):
+        """Stochastic salvo combat model
+
+        Args:
+            theta (torch.tensor): _description_
+            A0 (_type_): _description_
+            B0 (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
 
         if (A0 < 0 or B0 < 0):
             #  B1_actual_distr, prob_B_lives, False
@@ -433,6 +572,7 @@ class TorchGame():
         return B1_actual_distr, prob_B_lives, False
 
     def SalvoBattleStochastic(self, theta: torch.tensor, A0, B0):
+        """NOT IN USE"""
         # stochastistc salvo
 
         A_offNum = theta[2, 0]
@@ -518,6 +658,14 @@ class TorchGame():
         # return 1 - Prob_B_control, A1_nominal_distr, B1_nominal_distr
 
     def SalvoBattleDeterministic(self, theta: torch.tensor):
+        """NOT IN USE
+
+        Args:
+            theta (torch.tensor): _description_
+
+        Returns:
+            _type_: _description_
+        """
         # DeterministicSalvo
         # print(theta.requires_grad)
         theta = torch.transpose(theta, 0, -1)
@@ -568,19 +716,28 @@ class TorchGame():
         # returnVal = p1_WinProb * torch.tensor([1,1/p1_WinProb -1],requires_grad=True)
         return p1_WinProb
 
-    def OptimizeActionIT(self, State, budget, num_acts, num_reps):
-        DS = RandomDataSet(self.N_Technologies, num_acts, budget)
-        DLA = DataLoader(DS, batch_size=1, shuffle=False, num_workers=0)
-        DLS = DataLoader(StateDataSet(State, num_acts))
-
-        acts = []
-        for S, A in zip(DLS, DLA):
-            acts.append(self.OptimizeAction(S, A, num_reps))
-
     def OptimizeActionMP(self, kwargs):
+        """Wrapper functiion for optimize action during multiprocessing run
+
+        Args:
+            kwargs (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
         return self.OptimizeAction(**kwargs)
 
     def OptimizeAction(self, State, Action, num_reps=8):
+        """Runs LSS and saves returns Nash-equilirbium action
+
+        Args:
+            State (_type_): _description_
+            Action (_type_): _description_
+            num_reps (int, optional): _description_. Defaults to 8.
+
+        Returns:
+            _type_: _description_
+        """
         stat_0 = State.clone()
 
         assert ~torch.all(Action == 0)
@@ -591,6 +748,14 @@ class TorchGame():
         # print(theta_0)
 
         def scoringFun(z):
+            """Takes flattened action and performs monte carlo simulation across technology progress and salvo combat model.
+
+            Args:
+                z (_type_): _description_
+
+            Returns:
+                _type_: _description_
+            """
 
             score = 0
             for _ in range(num_reps):
@@ -609,18 +774,31 @@ class TorchGame():
             return torch.transpose(X, 0, -1)
 
         def L(xi, omega):
-            return xi * (1 - torch.exp(- torch.norm(omega, p=2)) ** 2)
+            """Lambda function from LSS
 
+            Args:
+                xi (_type_): _description_
+                omega (_type_): _description_
+
+            Returns:
+                _type_: _description_
+            """
+            return xi * (1 - torch.exp(- torch.norm(omega, p=2)) ** 2)
+        
+        #replace with stack_var
         z_n = torch.cat((Action[:, 0], Action[:, 1]), dim=0).unsqueeze(dim=-1).requires_grad_(True)
 
+        #flips gradient such to allow for minimax gradient decent
         grad_flipper = torch.tensor(
             [1.0 if i < self.N_Technologies else -1.0 for i in range(self.N_Technologies * 2)],
             device=self.DEVICE).unsqueeze(dim=-1)
 
+        #flipps values in hessian to allow for minimax optimization
         hess_flipper = torch.zeros(size=(self.N_Technologies * 2, self.N_Technologies * 2), device=self.DEVICE)
         hess_flipper[0:self.N_Technologies, :] = 1.0
         hess_flipper[self.N_Technologies:, :] = -1.0
 
+        
         params_jacobian = {
             "vectorize": True,
             "create_graph": False,
@@ -636,23 +814,21 @@ class TorchGame():
 
         }
 
-        # block matrix [[+1,+1],
-        #               [-1,-1]]
 
-        # Hyperparmeters LSS
 
+        # learning rate schedule. exponentia deacay with a non-zero tail
         def LR_sched(it, max=500, div=75, add=100):
             return torch.tensor(max / (math.exp((it + 1) / div)) + add)
 
+        #LSS hyperparameters
         nu_n = 100 * torch.ones((self.N_Technologies * 2, 1), device=self.DEVICE)
         gamma2 = 100 * torch.tensor(1, device=self.DEVICE)  # step size nu
         xi_1 = 5 * torch.tensor(1, device=self.DEVICE)  # regularization, pushes solution towards NE
+        
+        #number of consecutive itearions that fulfill convergence criteria before break
         convergence_hist = [False] * 12
-        iteration = 0
 
-        # sc = scoringFun(z_n)
-        # compgraph = torchviz.make_dot(var = sc)
-        # compgraph.render(directory="figures", format="png", view=True)
+        iteration = 0
 
         winprobs = []
         grad_norms = []
@@ -662,6 +838,7 @@ class TorchGame():
                     convergence_hist)):  # or torch.all(torch.norm(action_step):
 
                 with torch.no_grad():
+                    #perform SGD optimization
                     if self.SGD:
                     
                         
@@ -680,7 +857,8 @@ class TorchGame():
                         convergence_hist.append((check2<1E-1).all())
                         if all(convergence_hist):
                             break
-                
+                    
+                    #perform LSS opimzation
                     else:
                         
                         jac_z = jacobian(scoringFun, z_n, **params_jacobian)
@@ -691,6 +869,8 @@ class TorchGame():
 
                         omega = jac_z * grad_flipper
                         L_val = L(xi_1, omega)
+                        
+                        
                         fun_nu = lambda nu_n: torch.norm(hess_nu - omega, p=2) ** 2 + L_val * torch.norm(nu_n, p=2) ** 2
                         jac_nu = jacobian(fun_nu, nu_n, **params_jacobian)
 
@@ -707,10 +887,12 @@ class TorchGame():
                         nu_step = gamma2 * g_nu
                         nu_n += nu_step
 
+
+                        #convergence check
                         check1 = torch.max(torch.abs(omega))
                         check2 = torch.norm(self.stack_var(z_step), p=2, dim=0)
                         # print(f"it: {iteration}, max(Omega): {check1}, norm(z_step): {check2} \n")
-                        # print(f"norm(nu): {check2}")
+                        
                         convergence_hist.pop(0)
                         convergence_hist.append(
                             check1 < 5E-3 and torch.all(check2 < 1E-1) and iteration > 10
@@ -722,25 +904,29 @@ class TorchGame():
                         
                     iteration += 1
 
-                    # if False and (iteration % 10 == 0 or iteration < 5):
-                    # if iteration in [1,2]  or np.random.rand() < 0.1:
+
+                    #MAKE PLOTS
+
+                    # # if False and (iteration % 10 == 0 or iteration < 5):
+                    # if iteration in [1,5]  or np.random.rand() < 0.1:
                     #     fig, axes = plt.subplots(ncols=2)
                     #     # plt.title(f"iteration: {iteration}, prob = {winprob_n}")
                     #     ax1, ax2 = axes
                     #     ax1.set_xticks([0,5,10,15,20,25])
                     #     # hess = hess + torch.randn(size=hess.size())/750
                     #     im1 = ax1.imshow((hess - torch.mean(hess, (0,1))) / torch.std(hess) , cmap="coolwarm", interpolation="nearest", label="hessian")
-                    #     im2 = ax2.imshow((jac_z-torch.mean(jac_z, (0,1))) / torch.std(jac_z), cmap="coolwarm", interpolation="nearest", label="gradient")
+                    #     im2 = ax2.imshow((jac_z - torch.mean(jac_z, (0,1))) / torch.std(jac_z), cmap="coolwarm", interpolation="nearest", label="gradient")
                     #     ax2.set_xticklabels([])
                     #     # fig.legend()
                     #     fig.tight_layout(h_pad = 0, pad = .5)
                     #     fig.show()
-                        # if input("[y] to save figure") == "y":
-                        #     fig.savefig("figures/LSS_Hessian_2.pdf", bbox_inches = 'tight',pad_inches = 0.25)
-                        #     print("saved figure")
-                        # else:
-                        #     print("did not save")
+                    #     if input("[y] to save figure") == "y":
+                    #         fig.savefig("figures/LSS_Hessian_2.pdf", bbox_inches = 'tight',pad_inches = 0.25)
+                    #         print("saved figure")
+                    #     else:
+                    #         print("did not save")
                         
+
                        
                     # name = f"Hessian:{iteration}_{self.make_random_str(16)}"
                     # fig.savefig(os.path.join(self.dirPath, name) +".pdf", format = "pdf")                        
@@ -758,48 +944,47 @@ class TorchGame():
             #     fig.savefig(os.path.join(self.dirPath, name) +".pdf", format = "pdf")      
 
             #training trajectory
-            fig, ax1 = plt.subplots()
-            handles = []
-            # fig.s
+            # fig, ax1 = plt.subplots()
+            # handles = []
+            # # fig.s
 
-            # fig.title("norms")
-            # ax1.set_yscale("log")
-            ax1.set_ylabel("Gradient norms")
-            ax1.set_xlabel("Iteration")
+            # # fig.title("norms")
+            # # ax1.set_yscale("log")
+            # ax1.set_ylabel("Gradient norms")
+            # ax1.set_xlabel("Iteration")
             
-            ax2 = ax1.twinx()
-            ax2.grid(False)
-            # ax2.set_yscale("log")
-            ax2.set_ylabel("Action-step norms")
+            # ax2 = ax1.twinx()
+            # ax2.grid(False)
+            # # ax2.set_yscale("log")
+            # ax2.set_ylabel("Action-step norms")
             
-            L1, = ax1.plot(range(iteration), grad_norms, color="red", label="Gradient norms")
-            handles.append(L1)
+            # L1, = ax1.plot(range(iteration), grad_norms, color="red", label="Gradient norms")
+            # handles.append(L1)
 
            
-            L2, = ax2.plot(range(iteration), step_norms, color="blue", label="Action-step norms")
-            handles.append(L2)
+            # L2, = ax2.plot(range(iteration), step_norms, color="blue", label="Action-step norms")
+            # handles.append(L2)
            
-            ax3 = ax1.twinx()
-            ax3.set_ylabel("Objective function values")
+            # ax3 = ax1.twinx()
+            # ax3.set_ylabel("Objective function values")
             
-            ax3.spines.right.set_position(("outward", 40))
+            # ax3.spines.right.set_position(("outward", 40))
             
-            # ax3.set_yticks([])
-            ax3.grid(False)
-            L3, = ax3.plot(range(iteration), winprobs, color="green", label="Objective function")
-            handles.append(L3)
+            # # ax3.set_yticks([])
+            # ax3.grid(False)
+            # L3, = ax3.plot(range(iteration), winprobs, color="green", label="Objective function")
+            # handles.append(L3)
             
-            fig.legend(handles = handles, loc="upper right")#, ["Gradient Norms", "Action-step Norms"])
-            fig.tight_layout()
-            # name = f"training_conv:{iteration}_{self.make_random_str(16)}"
-            # # plt.show()
-            fileName = "LSS-convergence_0"
-            path = os.path.join(os.getcwd(),"figures", fileName)+".pdf"
+            # fig.legend(handles = handles, loc="upper right")#, ["Gradient Norms", "Action-step Norms"])
+            # fig.tight_layout()
+            # # name = f"training_conv:{iteration}_{self.make_random_str(16)}"
+            # # # plt.show()
+            # fileName = "LSS-convergence"
+            # path = os.path.join(os.getcwd(),"figures", fileName)+".pdf"
 
-            print(path) 
-            plt.show()
-            # # plt.savefig(path, format = "pdf")
-            pass
+            # print(path) 
+            # plt.show()
+            # # # plt.savefig(path, format = "pdf")
 
         except AssertionError as msg:
             print(msg)
@@ -1055,7 +1240,7 @@ if __name__ == "__main__":
 
     params_test = {
         "Horizon": 5, "Max_actions_chosen": 4, "N_actions_startpoint": 15, "I": .5, "D": 5,
-        "Players_action_length": [1, 1], "Max_optim_iter": 500, "Filter_actions": True,
+        "Players_action_length": [1, 1], "Max_optim_iter": 250, "Filter_actions": True,
         "Stochastic_state_update": True, "base_params": "custom", "NumRepsBattle": 50,
         "DEVICE": "cpu", "MultiProcess": False, "SGD": False, "fromSave":False
     }
