@@ -1,4 +1,4 @@
-from pytorch_v2 import TorchGame
+from main import TorchGame
 from matplotlib import pyplot as plt
 import numpy as np
 if __name__ == "__main__":

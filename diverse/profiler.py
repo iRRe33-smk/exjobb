@@ -1,6 +1,6 @@
-import pytorch_v2
+import main
 def main():
-    game = pytorch_v2.TorchGame(Horizon=1, N_actions=1, N_actions_startpoint=10, I=5, D=2)
+    game = main.TorchGame(Horizon=1, N_actions=1, N_actions_startpoint=10, I=5, D=2)
     game.Run()
 
 def test():
