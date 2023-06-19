@@ -8,6 +8,8 @@ This repository contains all the code and data used in the master thesis titled:
 Authors: Isak Berntsson, Lukas Peterson
 written in collaboration with SAAB technologies and Linköping University
 
+The full thesis and a powerpoint used during the presentation of the thesis can be found under deliverables.
+
 The main script is called "main"
 This is where the Game-class is defined and the parameters of the full simulation can be found.
 
