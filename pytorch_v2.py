@@ -751,7 +751,7 @@ class TorchGame():
             """Takes flattened action and performs monte carlo simulation across technology progress and salvo combat model.
 
             Args:
-                z (_type_): _description_
+                z (_type_): vector of actions [Action_a , Action_b]
 
             Returns:
                 _type_: _description_
@@ -759,12 +759,16 @@ class TorchGame():
 
             score = 0
             for _ in range(num_reps):
+                
+                #sample new state
                 stat_n = self.Update_State(stat_0, z)
                 assert ~torch.any(torch.isnan(stat_n))
 
+                #convert technology readiness to battleparameters
                 theta_n = self.techToParams(stat_n)
                 assert ~torch.any(torch.isnan(theta_n))
 
+                #run battle simulaton
                 score += self.SalvoBattleSequential(theta_n)
             score /= num_reps
             # print(score)
@@ -798,6 +802,7 @@ class TorchGame():
         hess_flipper[0:self.N_Technologies, :] = 1.0
         hess_flipper[self.N_Technologies:, :] = -1.0
 
+        
         
         params_jacobian = {
             "vectorize": True,
@@ -858,7 +863,7 @@ class TorchGame():
                         if all(convergence_hist):
                             break
                     
-                    #perform LSS opimzation
+                    #perform LSS opimzation, mazumdar et al
                     else:
                         
                         #gradient of scoring functuion w.r.t. investmens
@@ -868,7 +873,8 @@ class TorchGame():
                         #second degree partial derivatives of socring fun w.r.t. invesmtnets
                         """Only hess @ nu is required. Try using Hessian-vector-product instead. 
                         Should be faster but no such implentation has been found
-                        This is the most expensive line of code and speeding this up could realize major performance benefits"""
+                        This is the most expensive line of code and speeding this up could realize major performance benefits.
+                       """
                         hess = hessian(lambda z: scoringFun(z).squeeze(), z_n.squeeze(), **params_hessian)
                         hess_nu = hess @ nu_n
 
@@ -894,7 +900,7 @@ class TorchGame():
 
 
                         
-                        """checkong convergence critera
+                        """checking convergence critera
                         """
                         #convergence check
                         check1 = torch.max(torch.abs(omega))
@@ -997,15 +1003,19 @@ class TorchGame():
             # # # plt.savefig(path, format = "pdf")
 
         except AssertionError as msg:
+            #any actions that fail to converge or raise exceptions are skipped. in further anaysis
             print(msg)
             final_action = None
 
         return final_action
 
-    # keep optimization trajectories that converged, and filter out "duplicates" s.t., tol < eps
+    # keep optimization trajectories that converged and create representive set of less elements
     def FilterActions(self, Actions, q_max=8, share_of_variance=.8):
 
         def PCA(a_mat):
+            """PCA implementations where the number of principal components are chosen such that:
+            their total share of variance is > share_of_variance
+            """
             
             (U, S, V) = torch.svd(a_mat)
 
@@ -1060,6 +1070,7 @@ class TorchGame():
         def k_means(U, plot_silhouette=False):
             u = U.detach().numpy()
             # Choose optimal number of clusters with silhouette analysis
+            #usin silhouette method to select "optimal" number of centers
             k = k_means_silhouette_analysis(u, plot=plot_silhouette)
             # k = k_means_elbow(u)
 
@@ -1078,6 +1089,7 @@ class TorchGame():
 
         A = torch.cat((filtered), dim=1).T  # number of converged actions x 2*numTechs
         V = PCA(A)
+        #project cluster centers onto regular action space.
         pc_projection = A @ V
         centers, n_acts = k_means(pc_projection, plot_silhouette=False)
         centers = torch.tensor(centers)
@@ -1092,6 +1104,9 @@ class TorchGame():
         return acts
 
     def GetActionsMP(self, State):
+        """ Used when calculating running LSS in parallel.
+        """
+        
         ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint], device=self.DEVICE)
         optim_params = [{"State": State.clone(), "Action": ActionStartPoints[:, :, i].clone(), "num_reps": self.NumRepsBattle} for i
                         in range(self.N_actions_startpoint)]
@@ -1119,13 +1134,9 @@ class TorchGame():
             return NashEquilibria[:self.Max_actions_chosen]
 
     def GetActions(self, State):
-        # P1_points = self._randomPointsInCube()
-        # P2_points = self._randomPointsInCube()
-        # P1_points = torch.transpose(self._randomPointsInSphere(
-        #     rad=self.Players_action_length[0]), 0, -1)
-        # P2_points = torch.transpose(self._randomPointsInSphere(
-        #     rad=self.Players_action_length[1]), 0, -1)
-        # ActionStartPoints = torch.stack((P1_points, P2_points), dim=1)
+        #randomly inittialize random actions
+        #Apply LSS and filter actions
+        # return small number of possible actions
 
         ActionStartPoints = torch.rand(size=[self.N_Technologies, 2, self.N_actions_startpoint], device=self.DEVICE)
         # ActionStartPoints = self.normAction(ActionStartPoints)
@@ -1144,6 +1155,7 @@ class TorchGame():
 
     
     def tempSaveRun(self, Q, hist):
+
         tempDirPath = "temporarySaveDir"
         
         if not os.path.isdir(tempDirPath):
@@ -1178,6 +1190,7 @@ class TorchGame():
         
     def Run(self):
         
+        #Crude approximation of number of states visited
         maxactions = sum([self.Max_actions_chosen ** h for h in range(self.Horizon)])
 
         if self.fromSave:
@@ -1220,6 +1233,9 @@ class TorchGame():
 
 if __name__ == "__main__":
 
+    # Different sets of parametes
+    
+    
     params_single_step = {
         "Horizon": 1, "Max_actions_chosen": 350, "N_actions_startpoint": 350, "I": .5, "D": 5,
         "Players_action_length": [1, 1], "Max_optim_iter": 64, "Filter_actions": False,
@@ -1234,7 +1250,7 @@ if __name__ == "__main__":
         "DEVICE": "cpu", "MultiProcess": False, "SGD": False, "fromSave":False
     }
     
-    combitech = {
+    params_full = {
         "Horizon": 5, "Max_actions_chosen": 7, "N_actions_startpoint": 105, "I": 0.5, 
         "D": 5, "Players_action_length": [1, 1], "Max_optim_iter": 250, "Filter_actions": True, 
         "Stochastic_state_update": True, "base_params": "paper", "NumRepsBattle": 40,
